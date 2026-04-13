@@ -6,6 +6,8 @@
 #include <string>
 #include <sstream>
 #include <mutex>   // mutex
+#include <execution>   // concurrencia
+#include <algorithm>   //for_each
 #include "general_iterator.h"
 #include "util.h"
 #include "../types.h"
@@ -50,7 +52,6 @@ public:
     void setData(T data) { m_data = data; }
     Ref  getRef() { return m_ref; }
     void setRef(Ref ref) { m_ref = ref; }
-    
 };
 
 template <typename T>
@@ -87,16 +88,22 @@ public:
     backward_iterator rbegin() { return backward_iterator(this, m_data + m_size - 1); }
     backward_iterator rend()   { return backward_iterator(this, m_data - 1); }
     
-    // TODO: Agregar control concurrente
+    //CONCURRENCIA REAL
     template <typename Func, typename... Args>
-    void ForEach(Func func, Args &&...  args){
-        ::ForEach(begin(), end(), func, std::forward<Args>(args)... );
+    void ForEach(Func func, Args &&... args){
+        std::for_each(std::execution::par, begin(), end(),
+            [&](auto& elem){
+                func(elem, std::forward<Args>(args)...);
+            });
     }
 
-    // TODO: Agregar control concurrente
+    //CONCURRENCIA REAL INVERSA
     template <typename Func, typename... Args>
-    void ReverseForEach(Func func, Args &&...  args){
-        ::ForEach(rbegin(), rend(), func, std::forward<Args>(args)... );
+    void ReverseForEach(Func func, Args &&... args){
+        std::for_each(std::execution::par, rbegin(), rend(),
+            [&](auto& elem){
+                func(elem, std::forward<Args>(args)...);
+            });
     }
 };
 
@@ -125,7 +132,7 @@ void Vector<T>::resize(){
 template <typename T>
 void Vector<T>::push_back(value_type value, Ref ref){
     scoped_lock lock(m_mtx);
-    if(m_size == m_capacity) // Overflow
+    if(m_size == m_capacity)
         resize();
     m_data[m_size++] = Node(value, ref);
 }
@@ -160,17 +167,15 @@ ostream& operator<<(ostream& os, Vector<T>& v){
     return os << v.toString();
 }
 
-// TODO: Implementar como PR
+// PERSISTENCIA CON ISTREAM
 template <typename T>
 istream& operator>>(istream& is, Vector<T>& v){
+    T value;
+    while(is >> value){
+        v.push_back(value, Ref());
+    }
     return is;
 }
-
-// template <typename T>
-// template <typename Func, typename... Args>
-// void Vector<T>::ForEach(Func func, Args &&...  args){
-//     ::ForEach(begin(), end(), func, std::forward<Args>(args)... );
-// }
 
 void DemoVector();
 void DemoConcurrentVector();
