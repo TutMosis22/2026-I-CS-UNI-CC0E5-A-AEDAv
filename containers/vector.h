@@ -2,12 +2,10 @@
 #define __VECTOR_H__
 
 #include <iostream>
-#include <cstddef> // size_t
+#include <cstddef>
 #include <string>
 #include <sstream>
-#include <mutex>   // mutex
-#include <execution>   // concurrencia
-#include <algorithm>   //for_each
+#include <mutex>
 #include "general_iterator.h"
 #include "util.h"
 #include "../types.h"
@@ -91,20 +89,22 @@ public:
     //CONCURRENCIA REAL
     template <typename Func, typename... Args>
     void ForEach(Func func, Args &&... args){
-        std::for_each(std::execution::par, begin(), end(),
-            [&](auto& elem){
-                func(elem, std::forward<Args>(args)...);
-            });
+        scoped_lock lock(m_mtx);
+
+        for(auto it = begin(); it != end(); ++it){
+            func((*it).getDataRef(), std::forward<Args>(args)...);
+        }
     }
 
     //CONCURRENCIA REAL INVERSA
     template <typename Func, typename... Args>
     void ReverseForEach(Func func, Args &&... args){
-        std::for_each(std::execution::par, rbegin(), rend(),
-            [&](auto& elem){
-                func(elem, std::forward<Args>(args)...);
-            });
-    }
+        scoped_lock lock(m_mtx);
+
+        for(auto it = rbegin(); it != rend(); ++it){
+            func((*it).getDataRef(), std::forward<Args>(args)...);
+        }
+    }   
 };
 
 template <typename T>
