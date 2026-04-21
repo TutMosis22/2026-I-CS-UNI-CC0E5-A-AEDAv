@@ -38,49 +38,61 @@ public:
     VectorNode(T data, Ref ref) : m_data(data), m_ref(ref) {}
     VectorNode(const VectorNode &other) : m_data(other.m_data), m_ref(other.m_ref) {}
     VectorNode(VectorNode &&other) : m_data(move(other.m_data)), m_ref(move(other.m_ref)) {}
+
     VectorNode& operator=(const VectorNode &other) {
         m_data = other.m_data;
         m_ref = other.m_ref;
         return *this;
     }
+
     VectorNode& operator=(VectorNode &&other) {
         m_data = move(other.m_data);
         m_ref = move(other.m_ref);
         return *this;
     }
 
-    T    getData() const { return m_data; }
-    T&   getDataRef() { return m_data; }
+    T getData() const { return m_data; }
+    T& getDataRef() { return m_data; }
     void setData(T data) { m_data = data; }
-    Ref  getRef() { return m_ref; }
+    Ref getRef() { return m_ref; }
     void setRef(Ref ref) { m_ref = ref; }
-    
 };
 
 template <typename T>
 ostream& operator<<(ostream& os, VectorNode<T>& node){
-    return os << "(" << node.getData() << ", " << node.getRef() << ")";
+    return os << node.getData();
 }
 
 template <typename T>
 class Vector{
 public:
-    using  value_type = T;
-    using  forward_iterator   = vector_forward_iterator < Vector<T> > ;
-    friend forward_iterator;
-    using  backward_iterator  = vector_backward_iterator< Vector<T> > ;
-    friend backward_iterator;
-    using  Node               = VectorNode<T>;
+    using value_type = T;
+    using forward_iterator = vector_forward_iterator<Vector<T>>;
+    using backward_iterator = vector_backward_iterator<Vector<T>>;
+    using Node = VectorNode<T>;
+
 private:
-    size_t  m_capacity;
-    size_t  m_size;
-    Node   *m_data;
+    size_t m_capacity;
+    size_t m_size;
+    Node* m_data;
     mutable shared_mutex m_mtx;
-    void    resize();
+
+    void resize();
+
 public:
     Vector(size_t capacity = 10);
+    Vector(const Vector& other);
+    Vector(Vector&& other);
     virtual ~Vector();
+
     virtual void push_back(value_type value, Ref ref);
+    void pop_back();
+
+    void push_front(value_type value, Ref ref);
+    void pop_front();
+
+    value_type& operator[](size_t index);
+
     virtual size_t size() const;
     virtual string toString() const;
 
@@ -89,21 +101,27 @@ public:
 
     backward_iterator rbegin() { return backward_iterator(this, m_data + m_size - 1); }
     backward_iterator rend()   { return backward_iterator(this, m_data - 1); }
-    
-    // Done: Agregar control concurrente
+
+    // FOR EACH (MUTABLE)
     template <typename Func, typename... Args>
-    void ForEach(Func func, Args &&...  args){
+    void ForEach(Func func, Args&&... args){
         unique_lock<shared_mutex> lock(m_mtx);
-        ::ForEach(begin(), end(), func, std::forward<Args>(args)... );
+        ::ForEach(begin(), end(), func, std::forward<Args>(args)...);
     }
 
-    // Done: Agregar control concurrente
+    // FOR EACH (CONST)
     template <typename Func, typename... Args>
-    void ReverseForEach(Func func, Args &&...  args){
+    void ForEach(Func func, Args&&... args) const{
+        shared_lock<shared_mutex> lock(m_mtx);
+        ::ForEach(begin(), end(), func, std::forward<Args>(args)...);
+    }
+
+    // REVERSE
+    template <typename Func, typename... Args>
+    void ReverseForEach(Func func, Args&&... args){
         unique_lock<shared_mutex> lock(m_mtx);
-        if(m_size == 0)
-            return;
-        ::ForEach(rbegin(), rend(), func, std::forward<Args>(args)... );
+        if(m_size == 0) return;
+        ::ForEach(rbegin(), rend(), func, std::forward<Args>(args)...);
     }
 };
 
@@ -115,26 +133,103 @@ Vector<T>::Vector(size_t capacity){
 }
 
 template <typename T>
+Vector<T>::Vector(const Vector& other){
+    shared_lock<shared_mutex> lock(other.m_mtx);
+
+    m_capacity = other.m_capacity;
+    m_size = other.m_size;
+    m_data = new Node[m_capacity];
+
+    for(size_t i = 0; i < m_size; ++i)
+        m_data[i] = other.m_data[i];
+}
+
+template <typename T>
+Vector<T>::Vector(Vector&& other){
+    unique_lock<shared_mutex> lock(other.m_mtx);
+
+    m_capacity = other.m_capacity;
+    m_size = other.m_size;
+    m_data = other.m_data;
+
+    other.m_data = nullptr;
+    other.m_size = 0;
+    other.m_capacity = 0;
+}
+
+template <typename T>
 Vector<T>::~Vector(){
-    delete [] m_data;
+    unique_lock<shared_mutex> lock(m_mtx);
+    delete[] m_data;
 }
 
 template <typename T>
 void Vector<T>::resize(){
-    m_capacity = (m_capacity < 10) ? m_capacity+10 : m_capacity * 2;
-    Node * new_data = new Node[m_capacity];
+    m_capacity = (m_capacity < 10) ? m_capacity + 10 : m_capacity * 2;
+    Node* new_data = new Node[m_capacity];
+
     for(size_t i = 0; i < m_size; ++i)
         new_data[i] = m_data[i];
-    delete [] m_data;
+
+    delete[] m_data;
     m_data = new_data;
 }
 
 template <typename T>
 void Vector<T>::push_back(value_type value, Ref ref){
     unique_lock<shared_mutex> lock(m_mtx);
-    if(m_size == m_capacity) // Overflow
+
+    if(m_size == m_capacity)
         resize();
+
     m_data[m_size++] = Node(value, ref);
+}
+
+template <typename T>
+void Vector<T>::pop_back(){
+    unique_lock<shared_mutex> lock(m_mtx);
+
+    if(m_size == 0)
+        throw std::out_of_range("Empty vector");
+
+    --m_size;
+}
+
+template <typename T>
+void Vector<T>::push_front(value_type value, Ref ref){
+    unique_lock<shared_mutex> lock(m_mtx);
+
+    if(m_size == m_capacity)
+        resize();
+
+    for(size_t i = m_size; i > 0; --i)
+        m_data[i] = m_data[i-1];
+
+    m_data[0] = Node(value, ref);
+    ++m_size;
+}
+
+template <typename T>
+void Vector<T>::pop_front(){
+    unique_lock<shared_mutex> lock(m_mtx);
+
+    if(m_size == 0)
+        throw std::out_of_range("Empty vector");
+
+    for(size_t i = 0; i < m_size - 1; ++i)
+        m_data[i] = m_data[i+1];
+
+    --m_size;
+}
+
+template <typename T>
+typename Vector<T>::value_type& Vector<T>::operator[](size_t index){
+    shared_lock<shared_mutex> lock(m_mtx);
+
+    if(index >= m_size)
+        throw std::out_of_range("Index out of range");
+
+    return m_data[index].getDataRef();
 }
 
 template <typename T>
@@ -146,13 +241,15 @@ size_t Vector<T>::size() const{
 template <typename T>
 string Vector<T>::toString() const{
     shared_lock<shared_mutex> lock(m_mtx);
+
     ostringstream oss;
     oss << "[";
+
     for(size_t i = 0; i < m_size; ++i){
-        if(i > 0)
-            oss << ",";
+        if(i > 0) oss << " -> ";
         oss << m_data[i];
     }
+
     oss << "]";
     return oss.str();
 }
@@ -162,19 +259,29 @@ ostream& operator<<(ostream& os, const Vector<T>& v){
     return os << v.toString();
 }
 
-// TODO: Implementar
+// PARSER [a -> b -> c]
 template <typename T>
 istream& operator>>(istream& is, Vector<T>& v){
+    char ch;
+    T value;
+
+    is >> ch; // [
+
+    while(true){
+        is >> value;
+        v.push_back(value, Ref());
+
+        is >> ch;
+        if(ch == ']') break; // fin
+
+        // saltar ->
+        is >> ch; // >
+    }
+
     return is;
 }
-
-// template <typename T>
-// template <typename Func, typename... Args>
-// void Vector<T>::ForEach(Func func, Args &&...  args){
-//     ::ForEach(begin(), end(), func, std::forward<Args>(args)... );
-// }
 
 void DemoVector();
 void DemoConcurrentVector();
 
-#endif // __VECTOR_H__
+#endif
