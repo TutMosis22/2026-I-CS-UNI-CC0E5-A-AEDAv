@@ -11,16 +11,25 @@
 #include "../types.h"
 using namespace std;
 
-// Forward iterator
+// ============================
+// forward iterator (op++)
+// ============================
 template <typename Container>
 class LinkedListForwardIterator : public general_iterator<Container, LinkedListForwardIterator<Container>>{
+public:
     using MySelf = LinkedListForwardIterator<Container>;
     using Parent = general_iterator<Container, MySelf>;
     using Parent::Parent;
-    // TODO: Completar el operator++
+
+    MySelf operator++(){
+        this->m_pNode = this->m_pNode->getNext();
+        return *this;
+    }
 };
 
-// Linked List Node
+// ============================
+// Node
+// ============================
 template <typename T>
 class LLNode{
     using Node = LLNode<T>;
@@ -31,16 +40,17 @@ public:
     LLNode() : m_data(T()), m_next(nullptr) {}
     LLNode(T data) : m_data(data), m_next(nullptr) {}
     LLNode(T data, Node *next) : m_data(data), m_next(next) {}
-    virtual ~LLNode() {}
 
-    T      getData() const { return m_data; }
-    T&     getDataRef()    { return m_data; }
-    void   setData(T data) { m_data = data; }
-    Node*  getNext() const { return m_next; }
-    Node*& getNextRef()    { return m_next; }
-    void   setNext(Node *next) { m_next = next; }
+    T getData() const { return m_data; }
+    T& getDataRef() { return m_data; }
+    Node* getNext() const { return m_next; }
+    Node*& getNextRef() { return m_next; }
+    void setNext(Node* next) { m_next = next; }
 };
 
+// ============================
+// Traits
+// ============================
 template <typename T>
 struct AscendingLinkedListTrait{
     using value_type = T;
@@ -55,76 +65,239 @@ struct DescendingLinkedListTrait{
     using Comp = greater<T>;
 };
 
+// ============================
+// LinkedList
+// ============================
 template <typename Trait>
 class LinkedList{
 public:
     using value_type = typename Trait::value_type;
-    using Node       = typename Trait::Node;
-    using Comp       = typename Trait::Comp;
-    using MySelf     = LinkedList<Trait>;
+    using Node = typename Trait::Node;
+    using Comp = typename Trait::Comp;
 
-    using forward_iterator = LinkedListForwardIterator<MySelf>;
-    // friend forward_iterator;
+    using forward_iterator = LinkedListForwardIterator<LinkedList<Trait>>;
 
 private:
-    Node *m_pRoot = nullptr;
-    Node *m_tail = nullptr;
+    Node* m_pRoot = nullptr;
+    Node* m_tail = nullptr;
     size_t m_size = 0;
-    Comp   m_comp;
+    Comp m_comp;
     mutable shared_mutex m_mtx;
+
 public:
+
+    // ============================
+    // constructor
+    // ============================
     LinkedList() {}
-    LinkedList(const LinkedList &other){ // Copy constructor
-    }
-    LinkedList(LinkedList &&other){ // Move constructor
-    }
-    LinkedList& operator=(const LinkedList &other){ // Copy assignment operator
-    }
-    LinkedList& operator=(LinkedList &&other){ // Move assignment operator
-    }
-    
-    virtual        ~LinkedList() {}
-    virtual void    push_front(value_type value, Ref ref);
-    virtual void    pop_front();
-    virtual void    push_back(value_type value, Ref ref);
-    virtual void    pop_back();
-private:
-            void    internal_insert(Node* &pParent, const value_type &value, Ref ref);
-public:
-    virtual void    insert(const value_type &value, Ref ref);
-    
-    virtual value_type& operator[](size_t index);
-    virtual size_t  size() const;
-    virtual string  toString() const;
 
-    forward_iterator begin() { return forward_iterator(this, m_pRoot); }
-    forward_iterator end()   { return forward_iterator(this, nullptr); }
+    // ============================
+    // copy constructor
+    // ============================
+    LinkedList(const LinkedList &other){
+        shared_lock<shared_mutex> lock(other.m_mtx);
 
-    // Agregar Foreach
-    template <typename Func, typename... Args>
-    void ForEach(Func func, Args &&...  args){
+        Node* curr = other.m_pRoot;
+        while(curr){
+            push_back(curr->getData(), Ref());
+            curr = curr->getNext();
+        }
+    }
+
+    // ============================
+    // move constructor
+    // ============================
+    LinkedList(LinkedList &&other){
+        unique_lock<shared_mutex> lock(other.m_mtx);
+
+        m_pRoot = other.m_pRoot;
+        m_tail = other.m_tail;
+        m_size = other.m_size;
+
+        other.m_pRoot = nullptr;
+        other.m_tail = nullptr;
+        other.m_size = 0;
+    }
+
+    // ============================
+    // destructor seguro
+    // ============================
+    virtual ~LinkedList(){
         unique_lock<shared_mutex> lock(m_mtx);
-        ::ForEach(begin(), end(), func, std::forward<Args>(args)... );
+
+        while(m_pRoot){
+            Node* temp = m_pRoot;
+            m_pRoot = m_pRoot->getNext();
+            delete temp;
+        }
+    }
+
+    // ============================
+    // push_front
+    // ============================
+    void push_front(value_type value, Ref ref){
+        unique_lock<shared_mutex> lock(m_mtx);
+
+        Node* node = new Node(value, m_pRoot);
+        m_pRoot = node;
+
+        if(m_size == 0)
+            m_tail = node;
+
+        m_size++;
+    }
+
+    // ============================
+    // pop_front
+    // ============================
+    void pop_front(){
+        unique_lock<shared_mutex> lock(m_mtx);
+
+        if(!m_pRoot)
+            throw out_of_range("Empty list");
+
+        Node* temp = m_pRoot;
+        m_pRoot = m_pRoot->getNext();
+        delete temp;
+
+        m_size--;
+
+        if(m_size == 0)
+            m_tail = nullptr;
+    }
+
+    // ============================
+    // push_back
+    // ============================
+    void push_back(value_type value, Ref ref){
+        unique_lock<shared_mutex> lock(m_mtx);
+
+        Node* node = new Node(value);
+
+        if(!m_tail){
+            m_pRoot = m_tail = node;
+        }else{
+            m_tail->setNext(node);
+            m_tail = node;
+        }
+
+        m_size++;
+    }
+
+    // ============================
+    // pop_back
+    // ============================
+    void pop_back(){
+        unique_lock<shared_mutex> lock(m_mtx);
+
+        if(!m_pRoot)
+            throw out_of_range("Empty list");
+
+        if(m_pRoot == m_tail){
+            delete m_pRoot;
+            m_pRoot = m_tail = nullptr;
+        }else{
+            Node* curr = m_pRoot;
+            while(curr->getNext() != m_tail)
+                curr = curr->getNext();
+
+            delete m_tail;
+            m_tail = curr;
+            m_tail->setNext(nullptr);
+        }
+
+        m_size--;
+    }
+
+    // ============================
+    // operator[]
+    // ============================
+    value_type& operator[](size_t index){
+        shared_lock<shared_mutex> lock(m_mtx);
+
+        if(index >= m_size)
+            throw out_of_range("Index out of range");
+
+        Node* curr = m_pRoot;
+        for(size_t i = 0; i < index; ++i)
+            curr = curr->getNext();
+
+        return curr->getDataRef();
+    }
+
+    // ============================
+    // size
+    // ============================
+    size_t size() const{
+        shared_lock<shared_mutex> lock(m_mtx);
+        return m_size;
+    }
+
+    // ============================
+    // operator<<
+    // ============================
+    string toString() const{
+        shared_lock<shared_mutex> lock(m_mtx);
+
+        ostringstream oss;
+        oss << "[";
+
+        Node* curr = m_pRoot;
+        bool first = true;
+
+        while(curr){
+            if(!first) oss << " -> ";
+            oss << curr->getData();
+            first = false;
+            curr = curr->getNext();
+        }
+
+        oss << "]";
+        return oss.str();
+    }
+
+    forward_iterator begin(){ return forward_iterator(this, m_pRoot); }
+    forward_iterator end(){ return forward_iterator(this, nullptr); }
+
+    // ============================
+    // foreach
+    // ============================
+    template <typename Func, typename... Args>
+    void ForEach(Func func, Args&&... args){
+        unique_lock<shared_mutex> lock(m_mtx);
+        ::ForEach(begin(), end(), func, std::forward<Args>(args)...);
     }
 };
 
-template <typename T>
-void LinkedList<T>::internal_insert(Node* &pPr  ev, const value_type &value, Ref ref){
-    if(!pPrev || m_comp(value, pPrev->getDataRef())){
-        pPrev = new Node(value, ref, pPrev);
-        m_size++;
-        if(pPrev == m_pRoot)
-            m_tail = pPrev;
-        return;
+// ============================
+// operator<<
+// ============================
+template <typename Trait>
+ostream& operator<<(ostream& os, const LinkedList<Trait>& list){
+    return os << list.toString();
+}
+
+// ============================
+// operator>> (persistencia)
+// ============================
+template <typename Trait>
+istream& operator>>(istream& is, LinkedList<Trait>& list){
+    char ch;
+    typename Trait::value_type value;
+
+    is >> ch; // [
+
+    while(true){
+        is >> value;
+        list.push_back(value, Ref());
+
+        is >> ch;
+        if(ch == ']') break;
+
+        is >> ch; // >
     }
-    internal_insert(pPrev->getNextRef(), value, ref);
+
+    return is;
 }
 
-template <typename T>
-void LinkedList<T>::insert(const value_type &value, Ref ref){
-    internal_insert(m_pRoot, value, ref);
-}
-
-
-
-#endif // __LINKEDLIST_H__
+#endif
