@@ -1,111 +1,213 @@
 #include <iostream>
 #include <fstream>
-#include <string>
+#include <thread>
 
 #include "../types.h"
+
+#include "BinaryTree.h"
 #include "linkedlist.h"
-// #include "doublelinkedlist.h"
-// #include "circularlinkedlist.h"
-// #include "circularlinkedlist.h"
+#include "doublelinkedlist.h"
 
 using namespace std;
 
-template <typename Container>
-void DemoList(Container& list, string fileName){
-    list.insert(28, 15);
-    list.insert(17, 25);
-    list.insert(8, 35);
-    list.insert(4, 45);
-    list.insert(35, 55);
-    cout << list << endl;
-    // Grabar la lista en un archivo
-    ofstream os(fileName);
-    os << list << endl;
-    
-    // Leer la lista desde un archivo
-    ifstream is(fileName);
-    is >> list;
-    cout << list << endl;
+///////////////////////////////////////////////////////////////
+// FUNCIONES AUXILIARES
+///////////////////////////////////////////////////////////////
+
+void AddOne(int& x){
+    x++;
 }
 
-void LinkedListDemo(){
-    LinkedList<T1, AscendingLinkedListTrait<T1>> list;
-    DemoList(list, "AscLL.txt");
-    LinkedList<T1, DescendingLinkedListTrait<T1>> list2;
-    DemoList(list2, "DescLL.txt");
-}
+///////////////////////////////////////////////////////////////
+// DEMO AVL TREE
+///////////////////////////////////////////////////////////////
 
-void DoubleLinkedListDemo(){
-    // DoubleLinkedList<T1, AscendingDLLTrait<T1>> list;
-    // DemoList(list, "AscDLL.txt");
-    // DoubleLinkedList<T1, DescendingDLLTrait<T1>> list2;
-    // DemoList(list2, "DescDLL.txt");
-}
+void DemoAVLTree(){
 
-void CircularLinkedListDemo(){
-    
-}
+    cout << "\n======================================" << endl;
+    cout << "        DEMO AVL TREE" << endl;
+    cout << "======================================" << endl;
 
-void CircularLinkedListDemo(){
-    
-}
+    AVLTree<AscendingTrait<AVLNode<T1>>> tree;
 
-void ListsDemo(){
-    LinkedListDemo();
-    CircularLinkedListDemo();
-    DoubleLinkedListDemo();
-    CircularDoubleLinkedListDemo();
-}
+    ///////////////////////////////////////////////////////////
+    // INSERT
+    ///////////////////////////////////////////////////////////
 
-void TestConcurrencia() {
-    cout << "\nTEST DE CONCURRENCIA" << endl;
-    LinkedList<AscendingLinkedListTrait<T1>> list;
+    tree.insert(50, 1);
+    tree.insert(30, 2);
+    tree.insert(70, 3);
+    tree.insert(20, 4);
+    tree.insert(40, 5);
+    tree.insert(60, 6);
+    tree.insert(80, 7);
 
-    // 5 hilos van a intentar meter 1000 elementos cada uno al mismo tiempo
-    auto worker = [&list](int thread_id) {
-        for(int i = 0; i < 1000; i++) {
-            list.push_front(i, thread_id);
+    ///////////////////////////////////////////////////////////
+    // TOSTRING
+    ///////////////////////////////////////////////////////////
+
+    cout << "\nToString():" << endl;
+    cout << tree.toString() << endl;
+
+    ///////////////////////////////////////////////////////////
+    // INORDER
+    ///////////////////////////////////////////////////////////
+
+    cout << "\nInorder Forward Iterator:" << endl;
+
+    for(auto x : tree){
+        cout << x << " ";
+    }
+
+    cout << endl;
+
+    ///////////////////////////////////////////////////////////
+    // PREORDER
+    ///////////////////////////////////////////////////////////
+
+    cout << "\nPreorder Traversal:" << endl;
+
+    auto pre = tree.preorder();
+
+    for(auto x : pre){
+        cout << x << " ";
+    }
+
+    cout << endl;
+
+    ///////////////////////////////////////////////////////////
+    // POSTORDER
+    ///////////////////////////////////////////////////////////
+
+    cout << "\nPostorder Traversal:" << endl;
+
+    auto post = tree.postorder();
+
+    for(auto x : post){
+        cout << x << " ";
+    }
+
+    cout << endl;
+
+    ///////////////////////////////////////////////////////////
+    // PERSISTENCIA
+    ///////////////////////////////////////////////////////////
+
+    ofstream ofs("avl.txt");
+
+    ofs << tree;
+
+    ofs.close();
+
+    cout << "\nArchivo avl.txt generado correctamente." << endl;
+
+    ///////////////////////////////////////////////////////////
+    // OPERATOR >>
+    ///////////////////////////////////////////////////////////
+
+    AVLTree<AscendingTrait<AVLNode<T1>>> tree2;
+
+    ifstream ifs("avl.txt");
+
+    ifs >> tree2;
+
+    ifs.close();
+
+    cout << "\nTree cargado desde archivo:" << endl;
+
+    cout << tree2 << endl;
+
+    ///////////////////////////////////////////////////////////
+    // CONCURRENCIA
+    ///////////////////////////////////////////////////////////
+
+    cout << "\nTest de concurrencia:" << endl;
+
+    AVLTree<AscendingTrait<AVLNode<T1>>> concurrentTree;
+
+    auto worker = [&concurrentTree](int start){
+
+        for(int i=0;i<1000;i++){
+            concurrentTree.insert(start + i, i);
         }
+
     };
 
-    thread t1(worker, 1);
-    thread t2(worker, 2);
-    thread t3(worker, 3);
-    thread t4(worker, 4);
-    thread t5(worker, 5);
+    thread t1(worker, 0);
+    thread t2(worker, 10000);
+    thread t3(worker, 20000);
 
-    t1.join(); t2.join(); t3.join(); t4.join(); t5.join();
+    t1.join();
+    t2.join();
+    t3.join();
 
-    cout << "Se lanzaron 5 hilos insertando 1000 elementos simultaneamente." << endl;
-    cout << "Tamano de la lista (Esperado 5000): " << list.size() << endl;
-    if(list.size() == 5000) {
-        cout << "ESTADO: EXITO - El shared_mutex previno condiciones de carrera perfectamente." << endl;
-    } else {
-        cout << "ESTADO: FALLO - Hubo corrupcion de memoria." << endl;
+    cout << "Inserciones concurrentes completadas." << endl;
+
+    cout << "Cantidad de elementos: "
+         << concurrentTree.size()
+         << endl;
+}
+
+///////////////////////////////////////////////////////////////
+// DEMO DOUBLE LINKED LIST
+///////////////////////////////////////////////////////////////
+
+void DemoDoubleLinkedList(){
+
+    cout << "\n======================================" << endl;
+    cout << "     DEMO DOUBLE LINKED LIST" << endl;
+    cout << "======================================" << endl;
+
+    DoubleLinkedList<AscendingDLLTrait<T1>> list;
+
+    list.push_back(10,1);
+    list.push_back(20,2);
+    list.push_back(30,3);
+
+    ///////////////////////////////////////////////////////////
+    // FOREACH NATIVO
+    ///////////////////////////////////////////////////////////
+
+    cout << "\nForeach nativo:" << endl;
+
+    for(auto x : list){
+        cout << x << " ";
     }
-}
-void TestOperators() {
-    cout << "\nTEST DE OPERADORES" << endl;
-    LinkedList<AscendingLinkedListTrait<T1>> list;
-    
-    // 1. Probamos operator>> (Lectura)
-    cout << "Simulando lectura desde formato: [(10, 100), (20, 200), (30, 300)]" << endl;
-    stringstream simulador_input("[(10, 100), (20, 200), (30, 300)]");
-    simulador_input >> list;
 
-    // 2. Probamos operator<< (Escritura)
-    cout << "Lista luego de la lectura (operator<<): " << list << endl;
-    
-    // 3. Probamos operator[] (Acceso seguro por indice)
-    cout << "Accediendo al indice [0] (operator[]): Dato -> " << list[0] << endl;
-    cout << "Accediendo al indice [2] (operator[]): Dato -> " << list[2] << endl;
-    
-    // Probamos la excepcion del operator[] (Descomentar para probar)
-    // cout << "Probando fuera de rango: " << list[5] << endl; // Lanzara la excepcion
+    cout << endl;
+
+    ///////////////////////////////////////////////////////////
+    // ITERADOR BACKWARD
+    ///////////////////////////////////////////////////////////
+
+    cout << "\nBackward Iterator:" << endl;
+
+    for(auto it = list.rbegin(); it != list.rend(); ++it){
+        cout << *it << " ";
+    }
+
+    cout << endl;
+
+    ///////////////////////////////////////////////////////////
+    // TOSTRING
+    ///////////////////////////////////////////////////////////
+
+    cout << "\nToString:" << endl;
+
+    cout << list.toString() << endl;
 }
+
+///////////////////////////////////////////////////////////////
+// MAIN DEMO
+///////////////////////////////////////////////////////////////
+
 void ListsDemo(){
-    TestBasicos();
-    TestConcurrencia();
-    TestOperators();
-    cout << "\n=== FIN DE LAS PRUEBAS ===" << endl;
+
+    DemoAVLTree();
+
+    DemoDoubleLinkedList();
+
+    cout << "\n======================================" << endl;
+    cout << "     FIN DE TODAS LAS PRUEBAS" << endl;
+    cout << "======================================" << endl;
 }
