@@ -32,6 +32,8 @@ public:
 
 template <typename T>
 class VectorNode{
+public:
+    using value_type = T;
     T   m_data;
     Ref m_ref;
 public:
@@ -80,6 +82,13 @@ private:
     void    resize();
 public:
     Vector(size_t capacity = 10);
+    //TAREA HEAP: ACCESOO POR INDICE
+    Node& operator[](size_t index);
+    const Node& operator[](size_t index) const;
+
+    //TAREA HEAP: ELIMINAR ÚLTIMO ELEMENTO
+    void pop_back();
+
     virtual ~Vector();
     virtual void push_back(value_type value, Ref ref);
     virtual size_t size() const;
@@ -174,6 +183,31 @@ istream& operator>>(istream& is, Vector<T>& v){
 // void Vector<T>::ForEach(Func func, Args &&...  args){
 //     ::ForEach(begin(), end(), func, std::forward<Args>(args)... );
 // }
+template <typename T>
+typename Vector<T>::Node& Vector<T>::operator[](size_t index){
+    if(index >= m_size)
+        throw out_of_range("Indice fuera de rango");
+
+    return m_data[index];
+}
+
+template <typename T>
+const typename Vector<T>::Node& Vector<T>::operator[](size_t index) const{
+    if(index >= m_size)
+        throw out_of_range("Indice fuera de rango");
+
+    return m_data[index];
+}
+
+template <typename T>
+void Vector<T>::pop_back(){
+    unique_lock<shared_mutex> lock(m_mtx);
+
+    if(m_size == 0)
+        throw runtime_error("Vector vacio");
+
+    --m_size;
+}
 
 void DemoVector();
 void DemoConcurrentVector();

@@ -4,6 +4,8 @@
 
 #include "../types.h"
 #include "linkedlist.h"
+#include <thread>
+#include <sstream>
 // #include "doublelinkedlist.h"
 // #include "circularlinkedlist.h"
 // #include "circularlinkedlist.h"
@@ -29,9 +31,9 @@ void DemoList(Container& list, string fileName){
 }
 
 void LinkedListDemo(){
-    LinkedList<T1, AscendingLinkedListTrait<T1>> list;
+    LinkedList<AscendingLinkedListTrait<T1>> list;
     DemoList(list, "AscLL.txt");
-    LinkedList<T1, DescendingLinkedListTrait<T1>> list2;
+    LinkedList<DescendingLinkedListTrait<T1>> list2;
     DemoList(list2, "DescLL.txt");
 }
 
@@ -46,16 +48,12 @@ void CircularLinkedListDemo(){
     
 }
 
-void CircularLinkedListDemo(){
-    
-}
-
-void ListsDemo(){
-    LinkedListDemo();
-    CircularLinkedListDemo();
-    DoubleLinkedListDemo();
-    CircularDoubleLinkedListDemo();
-}
+//void ListsDemo(){
+//    LinkedListDemo();
+//    CircularLinkedListDemo();
+//    DoubleLinkedListDemo();
+//    CircularDoubleLinkedListDemo();
+//}
 
 void TestConcurrencia() {
     cout << "\nTEST DE CONCURRENCIA" << endl;
@@ -104,7 +102,7 @@ void TestOperators() {
     // cout << "Probando fuera de rango: " << list[5] << endl; // Lanzara la excepcion
 }
 void ListsDemo(){
-    TestBasicos();
+    //TestBasicos();
     TestConcurrencia();
     TestOperators();
     cout << "\n=== FIN DE LAS PRUEBAS ===" << endl;

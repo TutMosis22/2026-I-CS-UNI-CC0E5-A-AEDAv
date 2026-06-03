@@ -1,39 +1,94 @@
-
+#ifndef __DOUBLELINKEDLIST_H__
+#define __DOUBLELINKEDLIST_H__
 
 #include "linkedlist.h"
 
-// TODO Los iteradores ahora son forward y backward
-// Crear 2 nuevos i
+// ======================================================
+// Nodo para lista doblemente enlazada
+// ======================================================
+
 template <typename T>
-class DLLNode : public LLNode<T, DLLNode<T>>{
-    private:
-        Node *m_pPrev;
-    public:
-        DLLNode() : LLNode<T, DLLNode<T>>(), m_pPrev(nullptr) {}
-        DLLNode(T data, Ref ref, Node *next = nullptr, Node *prev = nullptr) : LLNode<T, DLLNode<T>>(data, ref, next), m_pPrev(prev) {}
+class DLLNode : public LLNode<T>{
+public:
+    using Node = DLLNode<T>;
 
-        Node*  getPrev() const     { return m_pPrev; }
-        void   setPrev(Node *prev) { m_pPrev = prev; }
-        Node*& getPrevRef()        { return m_pPrev; }
+private:
+    Node* m_pPrev;
 
+public:
+    DLLNode()
+        : LLNode<T>(), m_pPrev(nullptr) {}
+
+    DLLNode(T data, Ref ref,
+            Node* next = nullptr,
+            Node* prev = nullptr)
+        : LLNode<T>(data, ref, next),
+          m_pPrev(prev) {}
+
+    Node* getPrev() const {
+        return m_pPrev;
+    }
+
+    void setPrev(Node* prev) {
+        m_pPrev = prev;
+    }
+
+    Node*& getPrevRef() {
+        return m_pPrev;
+    }
+};
+
+// ======================================================
+// Traits
+// ======================================================
+
+template <typename T>
+struct AscendingDLLTrait :
+    public BaseTrait<DLLNode<T>, less<T>> {
 };
 
 template <typename T>
-struct AscendingDLLTrait : BaseTrait<DLLNode<T>, less<T>>{
+struct DescendingDLLTrait :
+    public BaseTrait<DLLNode<T>, greater<T>> {
 };
 
-template <typename T>
-struct DescendingDLLTrait : BaseTrait<DLLNode<T>, greater<T>>{
-};
+// ======================================================
+// DoubleLinkedList
+// ======================================================
 
 template <typename Trait>
 class DoubleLinkedList : public LinkedList<Trait>{
+public:
 
-    // TODO: Copy constructor
-    //       Simplificar y abstraer el bucle de copia de Nodes
-    //       Es posible que no necesites este constructor ya que lo heredaste
+    // --------------------------------------------------
+    // TAREA: Heredar constructores
+    // --------------------------------------------------
+    using LinkedList<Trait>::LinkedList;
 
-    // TODO: Move constructor
-    // TODO: Copy assignment operator
-    // TODO: Move assignment operator
+    // --------------------------------------------------
+    // TAREA: Copy Constructor
+    // --------------------------------------------------
+    DoubleLinkedList(const DoubleLinkedList&) = default;
+
+    // --------------------------------------------------
+    // TAREA: Move Constructor
+    // --------------------------------------------------
+    DoubleLinkedList(DoubleLinkedList&&) = default;
+
+    // --------------------------------------------------
+    // TAREA: Copy Assignment
+    // --------------------------------------------------
+    DoubleLinkedList& operator=(const DoubleLinkedList&) = default;
+
+    // --------------------------------------------------
+    // TAREA: Move Assignment
+    // --------------------------------------------------
+    DoubleLinkedList& operator=(DoubleLinkedList&&) = default;
+
+    // --------------------------------------------------
+    // Destructor
+    // --------------------------------------------------
+    ~DoubleLinkedList() = default;
 };
+
+#endif // __DOUBLELINKEDLIST_H__
