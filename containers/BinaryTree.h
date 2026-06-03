@@ -41,22 +41,31 @@ private:
     Comp  m_comp;
 
 protected:
+
+    // Inserción recursiva
     void internal_insert(Node*& pNode,
                          const value_type& data,
                          Ref ref);
 
+    // Liberación de memoria
     void internal_clear(Node* pNode);
 
+    // Impresión inorder
     void internal_print(Node* pNode);
 
-    // ===== TAREA: tamaño =====
+    // =========================
+    // TAREA: size()
+    // =========================
     size_t internal_size(Node* pNode);
 
-    // ===== TAREA: búsqueda =====
+    // =========================
+    // TAREA: search()
+    // =========================
     bool internal_search(Node* pNode,
                          const value_type& value);
 
 public:
+
     BinaryTree()
         : m_pRoot(nullptr)
     {
@@ -75,20 +84,24 @@ public:
         cout << endl;
     }
 
-    // ===== TAREA: size() =====
+    // =========================
+    // TAREA: obtener tamaño
+    // =========================
     size_t size(){
         return internal_size(m_pRoot);
     }
 
-    // ===== TAREA: search() =====
+    // =========================
+    // TAREA: buscar elemento
+    // =========================
     bool search(const value_type& value){
         return internal_search(m_pRoot, value);
     }
 };
 
-// ================================
+// =====================================================
 // IMPLEMENTACIONES
-// ================================
+// =====================================================
 
 template<typename Trait>
 void BinaryTree<Trait>::internal_insert(
@@ -112,6 +125,7 @@ void BinaryTree<Trait>::internal_insert(
 
 template<typename Trait>
 void BinaryTree<Trait>::internal_clear(Node* pNode){
+
     if(pNode == nullptr)
         return;
 
@@ -123,6 +137,7 @@ void BinaryTree<Trait>::internal_clear(Node* pNode){
 
 template<typename Trait>
 void BinaryTree<Trait>::internal_print(Node* pNode){
+
     if(pNode == nullptr)
         return;
 
@@ -137,9 +152,9 @@ void BinaryTree<Trait>::internal_print(Node* pNode){
     internal_print(pNode->m_pChild[1]);
 }
 
-// ================================
+// =====================================================
 // TAREA: SIZE
-// ================================
+// =====================================================
 
 template<typename Trait>
 size_t BinaryTree<Trait>::internal_size(Node* pNode){
@@ -152,9 +167,9 @@ size_t BinaryTree<Trait>::internal_size(Node* pNode){
          + internal_size(pNode->m_pChild[1]);
 }
 
-// ================================
+// =====================================================
 // TAREA: SEARCH
-// ================================
+// =====================================================
 
 template<typename Trait>
 bool BinaryTree<Trait>::internal_search(

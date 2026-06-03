@@ -17,10 +17,10 @@
 using namespace std;
 
 template <typename T>
-struct MinHeapTrait : public BaseTrait<T, less<T>> {};
+struct MinHeapTrait : public BaseHeapTrait<T, less<T>> {};
 
 template <typename T>
-struct MaxHeapTrait : public BaseTrait<T, greater<T>> {};
+struct MaxHeapTrait : public BaseHeapTrait<T, greater<T>> {};
 
 template<typename T>
 class HeapNode{
@@ -58,6 +58,16 @@ public:
         m_ref = ref;
     }
 };
+
+// =====================================================
+// operator<< para HeapNode
+// Necesario para que Vector<HeapNode<T>> pueda imprimirse
+// =====================================================
+
+template<typename T>
+ostream& operator<<(ostream& os, const HeapNode<T>& node){
+    return os << node.getData();
+}
 
 template<typename Trait>
 class Heap{
@@ -123,7 +133,7 @@ typename Heap<Trait>::Node Heap<Trait>::peek(){
     if(m_vec.size() == 0)
         throw runtime_error("Heap vacio");
 
-    return m_vec[0];
+    return m_vec[0].getData();
 }
 
 // =====================================================
@@ -143,7 +153,7 @@ string Heap<Trait>::toString(){
         if(i > 0)
             oss << ",";
 
-        oss << m_vec[i].getData();
+        oss << m_vec[i].getData().getData();    //VectorNode -> HeapNode-> int
     }
 
     oss << "]";
@@ -161,8 +171,8 @@ void Heap<Trait>::heapifyUp(size_t index){
         size_t parent = (index - 1) / 2;
 
         if(m_comp(
-            m_vec[index].getData(),
-            m_vec[parent].getData()
+            m_vec[index].getData().getData(),   //VectorNode ->HeapNode ->int
+            m_vec[parent].getData().getData()
         )){
             swap(m_vec[index], m_vec[parent]);
             index = parent;
@@ -201,16 +211,16 @@ void Heap<Trait>::heapifyDown(size_t index){
 
         if(left < n &&
            m_comp(
-               m_vec[left].getData(),
-               m_vec[best].getData()
+               m_vec[left].getData().getData(),
+               m_vec[best].getData().getData()
            )){
             best = left;
         }
 
         if(right < n &&
            m_comp(
-               m_vec[right].getData(),
-               m_vec[best].getData()
+               m_vec[right].getData().getData(),
+               m_vec[best].getData().getData()
            )){
             best = right;
         }
@@ -245,4 +255,35 @@ void Heap<Trait>::extract(){
 
     heapifyDown(0);
 }
+
+// =====================================================
+// operator
+// =====================================================
+
+template<typename Trait>
+ostream& operator<<(ostream& os, Heap<Trait>& heap){
+
+    os << heap.toString();
+
+    return os;
+}
+
+// =====================================================
+// operator>>
+// Formato:
+// 10 20 30 40
+// =====================================================
+
+template<typename Trait>
+istream& operator>>(istream& is, Heap<Trait>& heap){
+
+    typename Heap<Trait>::value_type value;
+
+    while(is >> value){
+        heap.insert(value, 0);
+    }
+
+    return is;
+}
+
 #endif // __HEAP_H__

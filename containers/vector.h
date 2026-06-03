@@ -175,6 +175,66 @@ ostream& operator<<(ostream& os, const Vector<T>& v){
 // TODO: Implementar
 template <typename T>
 istream& operator>>(istream& is, Vector<T>& v){
+
+    char ch;
+    T value;
+    Ref ref;
+
+    if(!(is >> ch) || ch != '['){
+        is.setstate(ios::failbit);
+        return is;
+    }
+
+    while(true){
+
+        is >> ws;
+
+        if(is.peek() == ']'){
+            is.get();
+            break;
+        }
+
+        if(!(is >> ch) || ch != '('){
+            is.setstate(ios::failbit);
+            return is;
+        }
+
+        if(!(is >> value)){
+            is.setstate(ios::failbit);
+            return is;
+        }
+
+        if(!(is >> ch) || ch != ','){
+            is.setstate(ios::failbit);
+            return is;
+        }
+
+        if(!(is >> ref)){
+            is.setstate(ios::failbit);
+            return is;
+        }
+
+        if(!(is >> ch) || ch != ')'){
+            is.setstate(ios::failbit);
+            return is;
+        }
+
+        v.push_back(value, ref);
+
+        is >> ws;
+
+        if(is.peek() == ','){
+            is.get();
+        }
+        else if(is.peek() == ']'){
+            continue;
+        }
+        else{
+            is.setstate(ios::failbit);
+            return is;
+        }
+    }
+
     return is;
 }
 
