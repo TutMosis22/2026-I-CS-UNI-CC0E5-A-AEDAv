@@ -8,6 +8,7 @@
 #include <thread>
 #include <sstream>
 #include <utility>
+#include "HashMap.h"
 
 using namespace std;
 
@@ -285,6 +286,8 @@ void ListsDemo(){
 
     DemoMinHeap();
     DemoMaxHeap();
+
+    DemoHashMap();
 
     cout << "\n=== FIN DE LAS PRUEBAS ===" << endl;
 }
