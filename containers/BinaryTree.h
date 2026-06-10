@@ -36,16 +36,15 @@ public:
     using Node       = typename Trait::Node;
     using Comp       = typename Trait::Comp;
 
-private:
+protected:
     Node* m_pRoot;
     Comp  m_comp;
 
-protected:
-
     // Inserción recursiva
-    void internal_insert(Node*& pNode,
-                         const value_type& data,
-                         Ref ref);
+    // el virtual permite que AVLTree sobreescriba con rebalanceo..
+    virtual void internal_insert(Node*& pNode,
+                                 const value_type& data,
+                                 Ref ref);
 
     // Liberación de memoria
     void internal_clear(Node* pNode);

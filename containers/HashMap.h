@@ -2,115 +2,109 @@
 #define __HASHMAP_H__
 
 #include <iostream>
-#include <cstddef>   // size_t
+#include <cstddef>
 #include <string>
 #include <sstream>
-#include <stdexcept>
 #include <utility>
-#include <tuple>
-#include <functional>
 #include <shared_mutex>
+#include "AVLTree.h"
+#include "traits.h"
 #include "../types.h"
+
 using namespace std;
 
 // =====================================================
-// AVLNode: Nodo del árbol AVL
-// Almacena un par (key, value) y la altura del nodo
+// KeyLess: comparador para el AVL interno del HashMap
+// Compara pares (K,V) solo por la clave K
 // =====================================================
 
-template <typename K, typename V>
-struct AVLNode {
-    using key_type    = K;
-    using mapped_type = V;
-
-    K           m_key;
-    V           m_value;
-    int         m_height;
-    AVLNode*    m_pChild[2]; // [0] = izquierda, [1] = derecha
-
-    AVLNode(const K& key, const V& value)
-        : m_key(key),
-          m_value(value),
-          m_height(1),
-          m_pChild{nullptr, nullptr}
-    {}
+template<typename K, typename V>
+struct KeyLess {
+    bool operator()(const pair<K,V>& a, const pair<K,V>& b) const {
+        return a.first < b.first;
+    }
 };
 
 // =====================================================
-// HashMap: Mapa basado en árbol AVL
+// HashMapTrait: trait para el AVL interno
+// Node  = AVLTreeNode< pair<K,V> >
+// Comp  = KeyLess<K,V>  (compara solo por key)
+// =====================================================
+
+template<typename K, typename V>
+struct HashMapTrait {
+    using value_type = pair<K,V>;
+    using Node       = AVLTreeNode< pair<K,V> >;
+    using Comp       = KeyLess<K,V>;
+};
+
+// =====================================================
+// HashMap: mapa basado en AVL
 //
-// Uso esperado (igual que std::map):
-//   HashMap<int, int> m;
+// Internamente tiene:
+//   AVLTree< HashMapTrait<K,V> > m_tree;
+//
+// Uso:
+//   HashMap<int,int> m;
 //   m[5] = 3;
 //   for (const auto& [key, value] : m) { ... }
 //   cout << m;
 //   cin  >> m;
 // =====================================================
 
-template <typename K, typename V>
+template<typename K, typename V>
 class HashMap {
 public:
     using key_type    = K;
     using mapped_type = V;
-    using value_type  = pair<const K, V>;
-    using MySelf      = HashMap<K, V>;
-    using Node        = AVLNode<K, V>;
+    using MySelf      = HashMap<K,V>;
+    using Trait       = HashMapTrait<K,V>;
+    using Tree        = AVLTree<Trait>;
+    using Node        = typename Trait::Node;
+    using value_type  = typename Trait::value_type;
 
 private:
-    Node*  m_pRoot;
-    size_t m_size;
+    Tree                 m_tree;
     mutable shared_mutex m_mtx;
 
-    // -------------------------
-    // Helpers AVL internos
-    // -------------------------
-    int    height(Node* p) const;
-    int    balance_factor(Node* p) const;
-    void   update_height(Node* p);
-    Node*  rotate_right(Node* y);
-    Node*  rotate_left(Node* x);
-    Node*  rebalance(Node* p);
-
-    // -------------------------
-    // Operaciones internas
-    // -------------------------
-    Node*  internal_insert(Node* p, const K& key, const V& value, Node*& inserted);
-    Node*  internal_find(Node* p, const K& key) const;
-    Node*  internal_copy(Node* p) const;
-    void   internal_clear(Node* p);
-    void   internal_print(Node* p, ostream& os, bool& first) const;
-    void   internal_to_sorted(Node* p, Node** arr, size_t& idx) const;
-    size_t internal_size(Node* p) const;
+    // =====================================================
+    // internal_copy: recorre inorder el árbol origen
+    // e inserta cada par en m_tree
+    // =====================================================
+    void internal_copy(Node* pNode) {
+        if (pNode == nullptr) return;
+        internal_copy(
+            static_cast<Node*>(pNode->m_pChild[0])
+        );
+        m_tree.insert(pNode->m_data, pNode->m_ref);
+        internal_copy(
+            static_cast<Node*>(pNode->m_pChild[1])
+        );
+    }
 
 public:
 
     // =====================================================
     // Constructor por defecto
     // =====================================================
-    HashMap()
-        : m_pRoot(nullptr), m_size(0)
-    {}
+    HashMap() {}
 
     // =====================================================
     // Copy Constructor
     // =====================================================
-    HashMap(const HashMap& other)
-        : m_pRoot(nullptr), m_size(0)
-    {
+    HashMap(const HashMap& other) {
         shared_lock<shared_mutex> lock(other.m_mtx);
-        m_pRoot = internal_copy(other.m_pRoot);
-        m_size  = other.m_size;
+        internal_copy(
+            static_cast<Node*>(other.m_tree.m_pRoot)
+        );
     }
 
     // =====================================================
     // Move Constructor
     // =====================================================
-    HashMap(HashMap&& other)
-        : m_pRoot(nullptr), m_size(0)
-    {
+    HashMap(HashMap&& other) {
         unique_lock<shared_mutex> lock(other.m_mtx);
-        m_pRoot = std::exchange(other.m_pRoot, nullptr);
-        m_size  = std::exchange(other.m_size,  0);
+        m_tree.m_pRoot = std::exchange(other.m_tree.m_pRoot, nullptr);
     }
 
     // =====================================================
@@ -118,12 +112,12 @@ public:
     // =====================================================
     HashMap& operator=(const HashMap& other) {
         if (this != &other) {
-            internal_clear(m_pRoot);
-            m_pRoot = nullptr;
-            m_size  = 0;
+            m_tree.~AVLTree<Trait>();
+            new (&m_tree) Tree();
             shared_lock<shared_mutex> lock(other.m_mtx);
-            m_pRoot = internal_copy(other.m_pRoot);
-            m_size  = other.m_size;
+            internal_copy(
+                static_cast<Node*>(other.m_tree.m_pRoot)
+            );
         }
         return *this;
     }
@@ -133,10 +127,10 @@ public:
     // =====================================================
     HashMap& operator=(HashMap&& other) {
         if (this != &other) {
-            internal_clear(m_pRoot);
+            m_tree.~AVLTree<Trait>();
+            new (&m_tree) Tree();
             unique_lock<shared_mutex> lock(other.m_mtx);
-            m_pRoot = std::exchange(other.m_pRoot, nullptr);
-            m_size  = std::exchange(other.m_size,  0);
+            m_tree.m_pRoot = std::exchange(other.m_tree.m_pRoot, nullptr);
         }
         return *this;
     }
@@ -144,49 +138,47 @@ public:
     // =====================================================
     // Destructor
     // =====================================================
-    virtual ~HashMap() {
-        internal_clear(m_pRoot);
-        m_pRoot = nullptr;
-        m_size  = 0;
-    }
+    virtual ~HashMap() {}
 
     // =====================================================
-    // operator[]: Acceso/inserción por clave
+    // operator[]: acceso/inserción por clave
     // Permite: m[5] = 3;
     // =====================================================
     V& operator[](const K& key) {
         unique_lock<shared_mutex> lock(m_mtx);
-        Node* inserted = nullptr;
-        m_pRoot = internal_insert(m_pRoot, key, V(), inserted);
-        return inserted->m_value;
+        pair<K,V> probe(key, V());
+        Node* node = m_tree.find(probe);
+        if (node == nullptr) {
+            m_tree.insert(probe, 0);
+            node = m_tree.find(probe);
+        }
+        return node->m_data.second;
     }
 
     // =====================================================
-    // insert: Inserción explícita
+    // insert: inserción explícita
     // =====================================================
     void insert(const K& key, const V& value) {
         unique_lock<shared_mutex> lock(m_mtx);
-        Node* inserted = nullptr;
-        m_pRoot = internal_insert(m_pRoot, key, value, inserted);
+        m_tree.insert(pair<K,V>(key, value), 0);
     }
 
     // =====================================================
-    // find: Buscar por clave, retorna puntero al valor
-    //       o nullptr si no existe
+    // find: retorna puntero al valor o nullptr
     // =====================================================
     V* find(const K& key) const {
         shared_lock<shared_mutex> lock(m_mtx);
-        Node* n = internal_find(m_pRoot, key);
-        if (n == nullptr) return nullptr;
-        return &(n->m_value);
+        Node* node = m_tree.find(pair<K,V>(key, V()));
+        if (node == nullptr) return nullptr;
+        return &(node->m_data.second);
     }
 
     // =====================================================
-    // size: Cantidad de elementos
+    // size: reutiliza size() del AVL
     // =====================================================
     size_t size() const {
         shared_lock<shared_mutex> lock(m_mtx);
-        return m_size;
+        return m_tree.size();
     }
 
     // =====================================================
@@ -194,25 +186,27 @@ public:
     // =====================================================
     bool isEmpty() const {
         shared_lock<shared_mutex> lock(m_mtx);
-        return m_size == 0;
+        return m_tree.size() == 0;
     }
 
     // =====================================================
-    // toString: Formato { key:value, key:value, ... }
+    // toString: reutiliza internal_toString del AVL
+    // Formato: {key:value,key:value,...}
     // =====================================================
     string toString() const {
         shared_lock<shared_mutex> lock(m_mtx);
         ostringstream oss;
         bool first = true;
         oss << "{";
-        internal_print(m_pRoot, oss, first);
+        m_tree.internal_toString(
+            static_cast<Node*>(m_tree.m_pRoot), oss, first
+        );
         oss << "}";
         return oss.str();
     }
 
     // =====================================================
     // operator<<
-    // Formato: {key:value,key:value,...}
     // =====================================================
     friend ostream& operator<<(ostream& os, const HashMap& map) {
         return os << map.toString();
@@ -220,7 +214,7 @@ public:
 
     // =====================================================
     // operator>>
-    // Formato esperado: {key:value,key:value,...}
+    // Formato: {key:value,key:value,...}
     // =====================================================
     friend istream& operator>>(istream& is, HashMap& map) {
         char ch;
@@ -238,8 +232,8 @@ public:
         }
 
         while (true) {
-            K key;
-            V value;
+            K    key;
+            V    value;
             char colon;
 
             if (!(is >> key)) {
@@ -279,26 +273,23 @@ public:
     }
 
     // =====================================================
-    // Iterador para range-based for:
-    // for (const auto& [key, value] : m) { ... }
+    // Iterador: recorre m_tree inorder
+    // Permite: for (const auto& [key, value] : m)
     // =====================================================
 
     class iterator {
     private:
-        Node**  m_arr;      // arreglo de punteros en orden inorder
-        size_t  m_size;
-        size_t  m_index;
+        value_type** m_arr;
+        size_t       m_size;
+        size_t       m_index;
     public:
-        using value_type = pair<const K&, V&>;
-
-        iterator(Node** arr, size_t size, size_t index)
+        iterator(value_type** arr, size_t size, size_t index)
             : m_arr(arr), m_size(size), m_index(index)
         {}
 
-        // Structured bindings: devuelve pair de referencias
         pair<const K&, V&> operator*() const {
-            return { m_arr[m_index]->m_key,
-                     m_arr[m_index]->m_value };
+            return { m_arr[m_index]->first,
+                     m_arr[m_index]->second };
         }
 
         iterator& operator++() {
@@ -311,23 +302,19 @@ public:
         }
     };
 
-    // =====================================================
-    // const_iterator para range-based for con const
-    // =====================================================
-
     class const_iterator {
     private:
-        Node**  m_arr;
-        size_t  m_size;
-        size_t  m_index;
+        value_type** m_arr;
+        size_t       m_size;
+        size_t       m_index;
     public:
-        const_iterator(Node** arr, size_t size, size_t index)
+        const_iterator(value_type** arr, size_t size, size_t index)
             : m_arr(arr), m_size(size), m_index(index)
         {}
 
         pair<const K&, const V&> operator*() const {
-            return { m_arr[m_index]->m_key,
-                     m_arr[m_index]->m_value };
+            return { m_arr[m_index]->first,
+                     m_arr[m_index]->second };
         }
 
         const_iterator& operator++() {
@@ -341,17 +328,18 @@ public:
     };
 
 private:
-    // Arreglo auxiliar para iteración inorder (se reconstruye en begin())
-    // Se almacena como mutable para poder usarlo en const begin()
-    mutable Node** m_iter_arr  = nullptr;
-    mutable size_t m_iter_size = 0;
+    mutable value_type** m_iter_arr  = nullptr;
+    mutable size_t       m_iter_size = 0;
 
     void rebuild_iter_arr() const {
         delete[] m_iter_arr;
-        m_iter_size = m_size;
-        m_iter_arr  = new Node*[m_iter_size + 1];
+        m_iter_size = m_tree.size();
+        m_iter_arr  = new value_type*[m_iter_size + 1];
         size_t idx  = 0;
-        internal_to_sorted(m_pRoot, m_iter_arr, idx);
+        m_tree.internal_collect(
+            static_cast<Node*>(m_tree.m_pRoot),
+            m_iter_arr, idx
+        );
     }
 
 public:
@@ -377,177 +365,14 @@ public:
 };
 
 // =====================================================
-// IMPLEMENTACIONES PRIVADAS AVL
+// DemoHashMap
 // =====================================================
 
-template <typename K, typename V>
-int HashMap<K,V>::height(Node* p) const {
-    return p ? p->m_height : 0;
-}
-
-template <typename K, typename V>
-int HashMap<K,V>::balance_factor(Node* p) const {
-    if (!p) return 0;
-    return height(p->m_pChild[0]) - height(p->m_pChild[1]);
-}
-
-template <typename K, typename V>
-void HashMap<K,V>::update_height(Node* p) {
-    if (!p) return;
-    int lh = height(p->m_pChild[0]);
-    int rh = height(p->m_pChild[1]);
-    p->m_height = 1 + (lh > rh ? lh : rh);
-}
-
-// Rotación derecha: y es el nodo desbalanceado
-template <typename K, typename V>
-typename HashMap<K,V>::Node* HashMap<K,V>::rotate_right(Node* y) {
-    Node* x  = y->m_pChild[0];
-    Node* T2 = x->m_pChild[1];
-
-    x->m_pChild[1] = y;
-    y->m_pChild[0] = T2;
-
-    update_height(y);
-    update_height(x);
-
-    return x;
-}
-
-// Rotación izquierda: x es el nodo desbalanceado
-template <typename K, typename V>
-typename HashMap<K,V>::Node* HashMap<K,V>::rotate_left(Node* x) {
-    Node* y  = x->m_pChild[1];
-    Node* T2 = y->m_pChild[0];
-
-    y->m_pChild[0] = x;
-    x->m_pChild[1] = T2;
-
-    update_height(x);
-    update_height(y);
-
-    return y;
-}
-
-// Rebalanceo post-inserción
-template <typename K, typename V>
-typename HashMap<K,V>::Node* HashMap<K,V>::rebalance(Node* p) {
-    update_height(p);
-    int bf = balance_factor(p);
-
-    // Caso Left-Left
-    if (bf > 1 && balance_factor(p->m_pChild[0]) >= 0)
-        return rotate_right(p);
-
-    // Caso Left-Right
-    if (bf > 1 && balance_factor(p->m_pChild[0]) < 0) {
-        p->m_pChild[0] = rotate_left(p->m_pChild[0]);
-        return rotate_right(p);
-    }
-
-    // Caso Right-Right
-    if (bf < -1 && balance_factor(p->m_pChild[1]) <= 0)
-        return rotate_left(p);
-
-    // Caso Right-Left
-    if (bf < -1 && balance_factor(p->m_pChild[1]) > 0) {
-        p->m_pChild[1] = rotate_right(p->m_pChild[1]);
-        return rotate_left(p);
-    }
-
-    return p;
-}
-
-// Inserción AVL: si la clave ya existe, solo devuelve el nodo existente
-template <typename K, typename V>
-typename HashMap<K,V>::Node* HashMap<K,V>::internal_insert(
-    Node* p, const K& key, const V& value, Node*& inserted)
-{
-    if (p == nullptr) {
-        p = new Node(key, value);
-        inserted = p;
-        m_size++;
-        return p;
-    }
-
-    if (key < p->m_key) {
-        p->m_pChild[0] = internal_insert(p->m_pChild[0], key, value, inserted);
-    }
-    else if (key > p->m_key) {
-        p->m_pChild[1] = internal_insert(p->m_pChild[1], key, value, inserted);
-    }
-    else {
-        // Clave duplicada: no insertar, devolver nodo existente
-        inserted = p;
-        return p;
-    }
-
-    return rebalance(p);
-}
-
-template <typename K, typename V>
-typename HashMap<K,V>::Node* HashMap<K,V>::internal_find(
-    Node* p, const K& key) const
-{
-    if (p == nullptr) return nullptr;
-    if (key == p->m_key) return p;
-    if (key < p->m_key)  return internal_find(p->m_pChild[0], key);
-    return                      internal_find(p->m_pChild[1], key);
-}
-
-template <typename K, typename V>
-typename HashMap<K,V>::Node* HashMap<K,V>::internal_copy(Node* p) const {
-    if (p == nullptr) return nullptr;
-    Node* newNode = new Node(p->m_key, p->m_value);
-    newNode->m_height    = p->m_height;
-    newNode->m_pChild[0] = internal_copy(p->m_pChild[0]);
-    newNode->m_pChild[1] = internal_copy(p->m_pChild[1]);
-    return newNode;
-}
-
-template <typename K, typename V>
-void HashMap<K,V>::internal_clear(Node* p) {
-    if (p == nullptr) return;
-    internal_clear(p->m_pChild[0]);
-    internal_clear(p->m_pChild[1]);
-    delete p;
-}
-
-// Impresión inorder: key:value, key:value, ...
-template <typename K, typename V>
-void HashMap<K,V>::internal_print(Node* p, ostream& os, bool& first) const {
-    if (p == nullptr) return;
-    internal_print(p->m_pChild[0], os, first);
-    if (!first) os << ",";
-    os << p->m_key << ":" << p->m_value;
-    first = false;
-    internal_print(p->m_pChild[1], os, first);
-}
-
-// Llenado inorder del arreglo de iteración
-template <typename K, typename V>
-void HashMap<K,V>::internal_to_sorted(Node* p, Node** arr, size_t& idx) const {
-    if (p == nullptr) return;
-    internal_to_sorted(p->m_pChild[0], arr, idx);
-    arr[idx++] = p;
-    internal_to_sorted(p->m_pChild[1], arr, idx);
-}
-
-template <typename K, typename V>
-size_t HashMap<K,V>::internal_size(Node* p) const {
-    if (p == nullptr) return 0;
-    return 1 + internal_size(p->m_pChild[0]) + internal_size(p->m_pChild[1]);
-}
-
-// =====================================================
-// DemoHashMap: función de demostración
-// Llamar desde ListsDemo() o main()
-// =====================================================
 void DemoHashMap(){
 
     cout << "\nTEST HASHMAP (AVL)" << endl;
 
-    HashMap<int, int> m;
+    HashMap<int,int> m;
 
     // operator[]: inserción y asignación
     m[5] = 10;
@@ -558,7 +383,7 @@ void DemoHashMap(){
 
     cout << "Mapa inicial: " << m << endl;
 
-    // Modificación por clave existente
+    // Modificación de clave existente
     m[3] = 99;
     cout << "Luego de m[3] = 99: " << m << endl;
 
@@ -569,17 +394,17 @@ void DemoHashMap(){
     }
 
     // operator>>
-    HashMap<int, int> m2;
+    HashMap<int,int> m2;
     stringstream ss("{10:20,30:40,50:60}");
     ss >> m2;
     cout << "Mapa leido con operator>>: " << m2 << endl;
 
     // Copy Constructor
-    HashMap<int, int> copia(m);
+    HashMap<int,int> copia(m);
     cout << "Copy Constructor: " << copia << endl;
 
     // Move Constructor
-    HashMap<int, int> movido(std::move(copia));
+    HashMap<int,int> movido(std::move(copia));
     cout << "Move Constructor: " << movido << endl;
 
     cout << "Size: " << m.size() << endl;
