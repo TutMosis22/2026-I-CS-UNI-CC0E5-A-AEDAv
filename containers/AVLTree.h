@@ -10,7 +10,14 @@
 using namespace std;
 
 // =====================================================
+// Tipo unificado para altura
+// =====================================================
+
+using height_t = size_t;
+
+// =====================================================
 // AVLTreeNode: extiende BinaryTreeNode con altura
+// Usa CRTP para evitar static_cast en AVLTree.
 // =====================================================
 
 template<typename T>
@@ -18,7 +25,7 @@ struct AVLTreeNode : public BinaryTreeNode<T> {
     using value_type = T;
     using Base       = BinaryTreeNode<T>;
 
-    size_t m_height;
+    height_t m_height;
 
     AVLTreeNode(T data, Ref ref = Ref())
         : Base(data, ref),
@@ -47,55 +54,48 @@ public:
 protected:
 
     // -------------------------
-    // Helpers AVL
+    // Helpers AVL..
     // -------------------------
 
-    size_t height(Node* p) const {
+    height_t height(Node* p) const {
         if (p == nullptr) return 0;
-        return static_cast<AVLTreeNode<value_type>*>(p)->m_height;
+        return p->m_height;
     }
 
     void update_height(Node* p) {
         if (p == nullptr) return;
-        size_t lh = height(p->m_pChild[0]);
-        size_t rh = height(p->m_pChild[1]);
-        static_cast<AVLTreeNode<value_type>*>(p)->m_height =
-            1 + (lh > rh ? lh : rh);
+        height_t lh = height(p->m_pChild[0]);
+        height_t rh = height(p->m_pChild[1]);
+        p->m_height  = 1 + (lh > rh ? lh : rh);
     }
 
-    // balance_factor: usa long para poder ser negativo
+    // balance_factor: diferencia de alturas izq - der
+    // positivo = pesado izquierda, negativo = pesado derecha
+    // Se mantiene como long solo aquí para poder ser negativoo
     long balance_factor(Node* p) const {
         if (p == nullptr) return 0;
         return (long)height(p->m_pChild[0])
              - (long)height(p->m_pChild[1]);
     }
 
-    // Rotación derecha: y es el nodo desbalanceado
-    Node* rotate_right(Node* y) {
-        Node* x  = y->m_pChild[0];
-        Node* T2 = x->m_pChild[1];
+    // =====================================================
+    // rotate: rotación unificada
+    // dir = 0 → derecha (left-heavy)
+    // dir = 1 → izquierda (right-heavy)
+    // Elimina la duplicación entre rotate_right/rotate_left
+    // =====================================================
+    Node* rotate(Node* p, int dir) {
+        int   other   = 1 - dir;
+        Node* child   = p->m_pChild[other];
+        Node* subtree = child->m_pChild[dir];
 
-        x->m_pChild[1] = y;
-        y->m_pChild[0] = T2;
+        child->m_pChild[dir]   = p;
+        p->m_pChild[other]     = subtree;
 
-        update_height(y);
-        update_height(x);
+        update_height(p);
+        update_height(child);
 
-        return x;
-    }
-
-    // Rotación izquierda: x es el nodo desbalanceado
-    Node* rotate_left(Node* x) {
-        Node* y  = x->m_pChild[1];
-        Node* T2 = y->m_pChild[0];
-
-        y->m_pChild[0] = x;
-        x->m_pChild[1] = T2;
-
-        update_height(x);
-        update_height(y);
-
-        return y;
+        return child;
     }
 
     Node* rebalance(Node* p) {
@@ -104,22 +104,22 @@ protected:
 
         // Left-Left
         if (bf > 1 && balance_factor(p->m_pChild[0]) >= 0)
-            return rotate_right(p);
+            return rotate(p, 0);
 
         // Left-Right
         if (bf > 1 && balance_factor(p->m_pChild[0]) < 0) {
-            p->m_pChild[0] = rotate_left(p->m_pChild[0]);
-            return rotate_right(p);
+            p->m_pChild[0] = rotate(p->m_pChild[0], 1);
+            return rotate(p, 0);
         }
 
         // Right-Right
         if (bf < -1 && balance_factor(p->m_pChild[1]) <= 0)
-            return rotate_left(p);
+            return rotate(p, 1);
 
         // Right-Left
         if (bf < -1 && balance_factor(p->m_pChild[1]) > 0) {
-            p->m_pChild[1] = rotate_right(p->m_pChild[1]);
-            return rotate_left(p);
+            p->m_pChild[1] = rotate(p->m_pChild[1], 0);
+            return rotate(p, 1);
         }
 
         return p;
@@ -133,7 +133,7 @@ protected:
                          const value_type& data,
                          Ref ref) override {
         if (pNode == nullptr) {
-            pNode = new AVLTreeNode<value_type>(data, ref);
+            pNode = new Node(data, ref);
             return;
         }
 

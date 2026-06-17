@@ -26,9 +26,14 @@ struct KeyLess {
 };
 
 // =====================================================
-// HashMapTrait: trait para el AVL interno
-// Node  = AVLTreeNode< pair<K,V> >
-// Comp  = KeyLess<K,V>  (compara solo por key)
+// HashMapTrait: Trait estandarizado para HashMap,
+// siguiendo el mismo patrón que AscendingLinkedListTrait
+// y AscendingTrait usados en LinkedList y BinaryTree.
+//
+// Expone: value_type, Node, Comp
+//
+// Utilizar:
+//   HashMap< HashMapTrait<K,V> > m;
 // =====================================================
 
 template<typename K, typename V>
@@ -39,47 +44,62 @@ struct HashMapTrait {
 };
 
 // =====================================================
-// HashMap: mapa basado en AVL
+// HashMap: mapa basado en AVL, recibe Trait
+// (mismo patrón que LinkedList<Trait> y BinaryTree<Trait>)
 //
 // Internamente tiene:
-//   AVLTree< HashMapTrait<K,V> > m_tree;
+//   AVLTree<Trait> m_tree;
 //
 // Uso:
-//   HashMap<int,int> m;
+//   HashMap< HashMapTrait<int,int> > m;
 //   m[5] = 3;
 //   for (const auto& [key, value] : m) { ... }
 //   cout << m;
 //   cin  >> m;
 // =====================================================
 
-template<typename K, typename V>
+template<typename Trait>
 class HashMap {
 public:
-    using key_type    = K;
-    using mapped_type = V;
-    using MySelf      = HashMap<K,V>;
-    using Trait       = HashMapTrait<K,V>;
+    using value_type = typename Trait::value_type;   // pair<K,V>
+    using Node       = typename Trait::Node;          // AVLTreeNode<pair<K,V>>
+    using Comp       = typename Trait::Comp;          // KeyLess<K,V>
+    using key_type    = typename value_type::first_type;
+    using mapped_type = typename value_type::second_type;
+    using MySelf      = HashMap<Trait>;
     using Tree        = AVLTree<Trait>;
-    using Node        = typename Trait::Node;
-    using value_type  = typename Trait::value_type;
 
 private:
     Tree                 m_tree;
     mutable shared_mutex m_mtx;
 
     // =====================================================
-    // internal_copy: recorre inorder el árbol origen
-    // e inserta cada par en m_tree
+    // child / root: acceso tipado a nodos
+    // Encapsula el cast en un solo lugar..
+    // =====================================================
+    Node* child(Node* p, int dir) const {
+        return static_cast<Node*>(p->m_pChild[dir]);
+    }
+
+    Node* root() const {
+        return static_cast<Node*>(m_tree.m_pRoot);
+    }
+
+    // =====================================================
+    // internal_copy: recorre inorder e inserta en m_tree
     // =====================================================
     void internal_copy(Node* pNode) {
         if (pNode == nullptr) return;
-        internal_copy(
-            static_cast<Node*>(pNode->m_pChild[0])
-        );
+        internal_copy(child(pNode, 0));
         m_tree.insert(pNode->m_data, pNode->m_ref);
-        internal_copy(
-            static_cast<Node*>(pNode->m_pChild[1])
-        );
+        internal_copy(child(pNode, 1));
+    }
+
+    // =====================================================
+    // clear: reinicia m_tree limpiamente
+    // =====================================================
+    void clear() {
+        m_tree = Tree();
     }
 
 public:
@@ -94,9 +114,7 @@ public:
     // =====================================================
     HashMap(const HashMap& other) {
         shared_lock<shared_mutex> lock(other.m_mtx);
-        internal_copy(
-            static_cast<Node*>(other.m_tree.m_pRoot)
-        );
+        internal_copy(other.root());
     }
 
     // =====================================================
@@ -112,12 +130,9 @@ public:
     // =====================================================
     HashMap& operator=(const HashMap& other) {
         if (this != &other) {
-            m_tree.~AVLTree<Trait>();
-            new (&m_tree) Tree();
+            clear();
             shared_lock<shared_mutex> lock(other.m_mtx);
-            internal_copy(
-                static_cast<Node*>(other.m_tree.m_pRoot)
-            );
+            internal_copy(other.root());
         }
         return *this;
     }
@@ -127,8 +142,7 @@ public:
     // =====================================================
     HashMap& operator=(HashMap&& other) {
         if (this != &other) {
-            m_tree.~AVLTree<Trait>();
-            new (&m_tree) Tree();
+            clear();
             unique_lock<shared_mutex> lock(other.m_mtx);
             m_tree.m_pRoot = std::exchange(other.m_tree.m_pRoot, nullptr);
         }
@@ -144,9 +158,9 @@ public:
     // operator[]: acceso/inserción por clave
     // Permite: m[5] = 3;
     // =====================================================
-    V& operator[](const K& key) {
+    mapped_type& operator[](const key_type& key) {
         unique_lock<shared_mutex> lock(m_mtx);
-        pair<K,V> probe(key, V());
+        value_type probe(key, mapped_type());
         Node* node = m_tree.find(probe);
         if (node == nullptr) {
             m_tree.insert(probe, 0);
@@ -158,17 +172,17 @@ public:
     // =====================================================
     // insert: inserción explícita
     // =====================================================
-    void insert(const K& key, const V& value) {
+    void insert(const key_type& key, const mapped_type& value) {
         unique_lock<shared_mutex> lock(m_mtx);
-        m_tree.insert(pair<K,V>(key, value), 0);
+        m_tree.insert(value_type(key, value), 0);
     }
 
     // =====================================================
     // find: retorna puntero al valor o nullptr
     // =====================================================
-    V* find(const K& key) const {
+    mapped_type* find(const key_type& key) const {
         shared_lock<shared_mutex> lock(m_mtx);
-        Node* node = m_tree.find(pair<K,V>(key, V()));
+        Node* node = m_tree.find(value_type(key, mapped_type()));
         if (node == nullptr) return nullptr;
         return &(node->m_data.second);
     }
@@ -198,9 +212,7 @@ public:
         ostringstream oss;
         bool first = true;
         oss << "{";
-        m_tree.internal_toString(
-            static_cast<Node*>(m_tree.m_pRoot), oss, first
-        );
+        m_tree.internal_toString(root(), oss, first);
         oss << "}";
         return oss.str();
     }
@@ -232,9 +244,9 @@ public:
         }
 
         while (true) {
-            K    key;
-            V    value;
-            char colon;
+            key_type    key;
+            mapped_type value;
+            char        colon;
 
             if (!(is >> key)) {
                 is.setstate(ios::failbit);
@@ -287,7 +299,7 @@ public:
             : m_arr(arr), m_size(size), m_index(index)
         {}
 
-        pair<const K&, V&> operator*() const {
+        pair<const key_type&, mapped_type&> operator*() const {
             return { m_arr[m_index]->first,
                      m_arr[m_index]->second };
         }
@@ -312,7 +324,7 @@ public:
             : m_arr(arr), m_size(size), m_index(index)
         {}
 
-        pair<const K&, const V&> operator*() const {
+        pair<const key_type&, const mapped_type&> operator*() const {
             return { m_arr[m_index]->first,
                      m_arr[m_index]->second };
         }
@@ -336,10 +348,7 @@ private:
         m_iter_size = m_tree.size();
         m_iter_arr  = new value_type*[m_iter_size + 1];
         size_t idx  = 0;
-        m_tree.internal_collect(
-            static_cast<Node*>(m_tree.m_pRoot),
-            m_iter_arr, idx
-        );
+        m_tree.internal_collect(root(), m_iter_arr, idx);
     }
 
 public:
@@ -372,7 +381,7 @@ void DemoHashMap(){
 
     cout << "\nTEST HASHMAP (AVL)" << endl;
 
-    HashMap<int,int> m;
+    HashMap< HashMapTrait<int,int> > m;
 
     // operator[]: inserción y asignación
     m[5] = 10;
@@ -394,17 +403,17 @@ void DemoHashMap(){
     }
 
     // operator>>
-    HashMap<int,int> m2;
+    HashMap< HashMapTrait<int,int> > m2;
     stringstream ss("{10:20,30:40,50:60}");
     ss >> m2;
     cout << "Mapa leido con operator>>: " << m2 << endl;
 
     // Copy Constructor
-    HashMap<int,int> copia(m);
+    HashMap< HashMapTrait<int,int> > copia(m);
     cout << "Copy Constructor: " << copia << endl;
 
     // Move Constructor
-    HashMap<int,int> movido(std::move(copia));
+    HashMap< HashMapTrait<int,int> > movido(std::move(copia));
     cout << "Move Constructor: " << movido << endl;
 
     cout << "Size: " << m.size() << endl;
