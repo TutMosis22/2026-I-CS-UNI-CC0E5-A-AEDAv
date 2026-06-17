@@ -9,13 +9,22 @@
 
 using namespace std;
 
-template<typename T>
+// =====================================================
+// BinaryTreeNode: usa CRTP (Derived) para que m_pChild
+// devuelva el tipo derivado directamente, sin static_cast
+// disperso en BinaryTree/AVLTree.
+//
+// Derived = el tipo de nodo final (BinaryTreeNode<T> o
+// AVLTreeNode<T>, que hereda de BinaryTreeNode<T,Derived>)
+// =====================================================
+
+template<typename T, typename Derived>
 struct BinaryTreeNode{
     using value_type = T;
 
     T m_data;
     Ref m_ref;
-    BinaryTreeNode *m_pChild[2];
+    Derived *m_pChild[2];
 
     BinaryTreeNode(T data, Ref ref = Ref())
         : m_data(data),
@@ -23,11 +32,16 @@ struct BinaryTreeNode{
           m_pChild{nullptr, nullptr}
     {
     }
+
+    // child: acceso tipado, ya devuelve Derived* directamente
+    Derived*& child(int dir){
+        return m_pChild[dir];
+    }
 };
 
 // Utilizar:
-// AscendingTrait<BinaryTreeNode<T>>
-// DescendingTrait<BinaryTreeNode<T>>
+// AscendingTrait<BinaryTreeNode<T,T>>
+// DescendingTrait<BinaryTreeNode<T,T>>
 
 template<typename Trait>
 class BinaryTree{
@@ -41,7 +55,7 @@ protected:
     Comp  m_comp;
 
     // Inserción recursiva
-    // el virtual permite que AVLTree sobreescriba con rebalanceo..
+    // virtual: permite que AVLTree sobreescriba con rebalanceo
     virtual void internal_insert(Node*& pNode,
                                  const value_type& data,
                                  Ref ref);
@@ -55,13 +69,13 @@ protected:
     // =========================
     // TAREA: size()
     // =========================
-    size_t internal_size(Node* pNode);
+    size_t internal_size(Node* pNode) const;
 
     // =========================
     // TAREA: search()
     // =========================
     bool internal_search(Node* pNode,
-                         const value_type& value);
+                         const value_type& value) const;
 
 public:
 
@@ -86,15 +100,46 @@ public:
     // =========================
     // TAREA: obtener tamaño
     // =========================
-    size_t size(){
+    size_t size() const {
         return internal_size(m_pRoot);
     }
 
     // =========================
     // TAREA: buscar elemento
     // =========================
-    bool search(const value_type& value){
+    bool search(const value_type& value) const {
         return internal_search(m_pRoot, value);
+    }
+
+    // =========================
+    // root: getter publico para composicion
+    // Permite que clases que CONTIENEN un BinaryTree/AVLTree
+    // (como HashMap) accedan a la raiz sin romper encapsulamiento
+    // =========================
+    Node* root() const {
+        return m_pRoot;
+    }
+
+    // =========================
+    // take_root: extrae la raiz dejando el arbol vacio.
+    // Usado por contenedores que COMPONEN un arbol (HashMap)
+    // para implementar su propio move constructor/assignment
+    // sin duplicar punteros (evita doble free).
+    // =========================
+    Node* take_root(){
+        Node* old = m_pRoot;
+        m_pRoot = nullptr;
+        return old;
+    }
+
+    // =========================
+    // adopt_root: reemplaza la raiz actual (liberando la
+    // anterior) por una ya existente. Complemento de
+    // take_root() para mover el contenido entre arboles.
+    // =========================
+    void adopt_root(Node* newRoot){
+        internal_clear(m_pRoot);
+        m_pRoot = newRoot;
     }
 };
 
@@ -116,7 +161,7 @@ void BinaryTree<Trait>::internal_insert(
     auto branch = !m_comp(data, pNode->m_data);
 
     internal_insert(
-        pNode->m_pChild[branch],
+        pNode->child(branch),
         data,
         ref
     );
@@ -128,8 +173,8 @@ void BinaryTree<Trait>::internal_clear(Node* pNode){
     if(pNode == nullptr)
         return;
 
-    internal_clear(pNode->m_pChild[0]);
-    internal_clear(pNode->m_pChild[1]);
+    internal_clear(pNode->child(0));
+    internal_clear(pNode->child(1));
 
     delete pNode;
 }
@@ -140,7 +185,7 @@ void BinaryTree<Trait>::internal_print(Node* pNode){
     if(pNode == nullptr)
         return;
 
-    internal_print(pNode->m_pChild[0]);
+    internal_print(pNode->child(0));
 
     cout << "("
          << pNode->m_data
@@ -148,7 +193,7 @@ void BinaryTree<Trait>::internal_print(Node* pNode){
          << pNode->m_ref
          << ") ";
 
-    internal_print(pNode->m_pChild[1]);
+    internal_print(pNode->child(1));
 }
 
 // =====================================================
@@ -156,14 +201,14 @@ void BinaryTree<Trait>::internal_print(Node* pNode){
 // =====================================================
 
 template<typename Trait>
-size_t BinaryTree<Trait>::internal_size(Node* pNode){
+size_t BinaryTree<Trait>::internal_size(Node* pNode) const {
 
     if(pNode == nullptr)
         return 0;
 
     return 1
-         + internal_size(pNode->m_pChild[0])
-         + internal_size(pNode->m_pChild[1]);
+         + internal_size(pNode->child(0))
+         + internal_size(pNode->child(1));
 }
 
 // =====================================================
@@ -173,7 +218,7 @@ size_t BinaryTree<Trait>::internal_size(Node* pNode){
 template<typename Trait>
 bool BinaryTree<Trait>::internal_search(
     Node* pNode,
-    const value_type& value)
+    const value_type& value) const
 {
     if(pNode == nullptr)
         return false;
@@ -184,7 +229,7 @@ bool BinaryTree<Trait>::internal_search(
     auto branch = !m_comp(value, pNode->m_data);
 
     return internal_search(
-        pNode->m_pChild[branch],
+        pNode->child(branch),
         value
     );
 }

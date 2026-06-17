@@ -6,6 +6,7 @@
 #include <string>
 #include <sstream>
 #include <utility>
+#include <mutex>
 #include <shared_mutex>
 #include "AVLTree.h"
 #include "traits.h"
@@ -14,44 +15,53 @@
 using namespace std;
 
 // =====================================================
-// KeyLess: comparador para el AVL interno del HashMap
-// Compara pares (K,V) solo por la clave K
+// Byte: tipo dedicado para parsing de caracteres
+// de control en operator>>. No se usa 'char' crudo.
+// =====================================================
+
+using Byte = char;
+
+// =====================================================
+// MapLess: comparador genérico para pares (K,V),
+// ordena solo por la clave K.
+// No revela detalles de la implementación interna
+// (AVL es un detalle de AscendingMapTrait, no del nombre).
 // =====================================================
 
 template<typename K, typename V>
-struct KeyLess {
+struct MapLess {
     bool operator()(const pair<K,V>& a, const pair<K,V>& b) const {
         return a.first < b.first;
     }
 };
 
 // =====================================================
-// HashMapTrait: Trait estandarizado para HashMap,
-// siguiendo el mismo patrón que AscendingLinkedListTrait
-// y AscendingTrait usados en LinkedList y BinaryTree.
+// AscendingMapTrait: Trait estandarizado para HashMap,
+// mismo patrón que AscendingLinkedListTrait y AscendingTrait.
+// No expone que la implementación interna usa AVL.
 //
 // Expone: value_type, Node, Comp
 //
 // Utilizar:
-//   HashMap< HashMapTrait<K,V> > m;
+//   HashMap< AscendingMapTrait<K,V> > m;
 // =====================================================
 
 template<typename K, typename V>
-struct HashMapTrait {
+struct AscendingMapTrait {
     using value_type = pair<K,V>;
     using Node       = AVLTreeNode< pair<K,V> >;
-    using Comp       = KeyLess<K,V>;
+    using Comp       = MapLess<K,V>;
 };
 
 // =====================================================
-// HashMap: mapa basado en AVL, recibe Trait
+// HashMap: mapa estandarizado, recibe Trait
 // (mismo patrón que LinkedList<Trait> y BinaryTree<Trait>)
 //
-// Internamente tiene:
-//   AVLTree<Trait> m_tree;
+// La implementación interna (AVL) es un detalle privado;
+// el Trait solo expone value_type, Node y Comp.
 //
 // Uso:
-//   HashMap< HashMapTrait<int,int> > m;
+//   HashMap< AscendingMapTrait<T1,T1> > m;
 //   m[5] = 3;
 //   for (const auto& [key, value] : m) { ... }
 //   cout << m;
@@ -61,28 +71,26 @@ struct HashMapTrait {
 template<typename Trait>
 class HashMap {
 public:
-    using value_type = typename Trait::value_type;   // pair<K,V>
-    using Node       = typename Trait::Node;          // AVLTreeNode<pair<K,V>>
-    using Comp       = typename Trait::Comp;          // KeyLess<K,V>
-    using key_type    = typename value_type::first_type;
-    using mapped_type = typename value_type::second_type;
-    using MySelf      = HashMap<Trait>;
-    using Tree        = AVLTree<Trait>;
+    using value_type  = typename Trait::value_type;   // pair<K,V>
+    using Node        = typename Trait::Node;
+    using Comp        = typename Trait::Comp;
+    using key_type     = typename value_type::first_type;
+    using mapped_type  = typename value_type::second_type;
+    using MySelf       = HashMap<Trait>;
 
 private:
-    Tree                 m_tree;
-    mutable shared_mutex m_mtx;
+    // Estructura interna: árbol balanceado.
+    // Implementación oculta tras la interfaz pública del HashMap.
+    AVLTree<Trait>        m_tree;
+    mutable shared_mutex  m_mtx;
 
     // =====================================================
-    // child / root: acceso tipado a nodos
-    // Encapsula el cast en un solo lugar..
+    // root: delega en el getter publico de AVLTree
+    // (ya no requiere static_cast gracias al CRTP en
+    // BinaryTreeNode/AVLTreeNode)
     // =====================================================
-    Node* child(Node* p, int dir) const {
-        return static_cast<Node*>(p->m_pChild[dir]);
-    }
-
     Node* root() const {
-        return static_cast<Node*>(m_tree.m_pRoot);
+        return m_tree.root();
     }
 
     // =====================================================
@@ -90,16 +98,16 @@ private:
     // =====================================================
     void internal_copy(Node* pNode) {
         if (pNode == nullptr) return;
-        internal_copy(child(pNode, 0));
+        internal_copy(pNode->child(0));
         m_tree.insert(pNode->m_data, pNode->m_ref);
-        internal_copy(child(pNode, 1));
+        internal_copy(pNode->child(1));
     }
 
     // =====================================================
     // clear: reinicia m_tree limpiamente
     // =====================================================
     void clear() {
-        m_tree = Tree();
+        m_tree = AVLTree<Trait>();
     }
 
 public:
@@ -120,9 +128,9 @@ public:
     // =====================================================
     // Move Constructor
     // =====================================================
-    HashMap(HashMap&& other) {
+    HashMap(HashMap&& other) noexcept {
         unique_lock<shared_mutex> lock(other.m_mtx);
-        m_tree.m_pRoot = std::exchange(other.m_tree.m_pRoot, nullptr);
+        m_tree.adopt_root(other.m_tree.take_root());
     }
 
     // =====================================================
@@ -140,11 +148,11 @@ public:
     // =====================================================
     // Move Assignment
     // =====================================================
-    HashMap& operator=(HashMap&& other) {
+    HashMap& operator=(HashMap&& other) noexcept {
         if (this != &other) {
             clear();
             unique_lock<shared_mutex> lock(other.m_mtx);
-            m_tree.m_pRoot = std::exchange(other.m_tree.m_pRoot, nullptr);
+            m_tree.adopt_root(other.m_tree.take_root());
         }
         return *this;
     }
@@ -152,7 +160,9 @@ public:
     // =====================================================
     // Destructor
     // =====================================================
-    virtual ~HashMap() {}
+    virtual ~HashMap() {
+        delete[] m_iter_arr;
+    }
 
     // =====================================================
     // operator[]: acceso/inserción por clave
@@ -188,7 +198,7 @@ public:
     }
 
     // =====================================================
-    // size: reutiliza size() del AVL
+    // size: reutiliza size() del árbol interno
     // =====================================================
     size_t size() const {
         shared_lock<shared_mutex> lock(m_mtx);
@@ -204,7 +214,7 @@ public:
     }
 
     // =====================================================
-    // toString: reutiliza internal_toString del AVL
+    // toString: reutiliza internal_toString del árbol interno
     // Formato: {key:value,key:value,...}
     // =====================================================
     string toString() const {
@@ -227,11 +237,12 @@ public:
     // =====================================================
     // operator>>
     // Formato: {key:value,key:value,...}
+    // Usa Byte en vez de char crudo para los delimitadores
     // =====================================================
     friend istream& operator>>(istream& is, HashMap& map) {
-        char ch;
+        Byte b;
 
-        if (!(is >> ch) || ch != '{') {
+        if (!(is >> b) || b != '{') {
             is.setstate(ios::failbit);
             return is;
         }
@@ -246,7 +257,7 @@ public:
         while (true) {
             key_type    key;
             mapped_type value;
-            char        colon;
+            Byte        colon;
 
             if (!(is >> key)) {
                 is.setstate(ios::failbit);
@@ -375,13 +386,15 @@ public:
 
 // =====================================================
 // DemoHashMap
+// Usa T1 (definido en types.h) en vez de int crudo,
+// igual que LinkedListDemo usa T1.
 // =====================================================
 
 void DemoHashMap(){
 
     cout << "\nTEST HASHMAP (AVL)" << endl;
 
-    HashMap< HashMapTrait<int,int> > m;
+    HashMap< AscendingMapTrait<T1,T1> > m;
 
     // operator[]: inserción y asignación
     m[5] = 10;
@@ -403,17 +416,17 @@ void DemoHashMap(){
     }
 
     // operator>>
-    HashMap< HashMapTrait<int,int> > m2;
+    HashMap< AscendingMapTrait<T1,T1> > m2;
     stringstream ss("{10:20,30:40,50:60}");
     ss >> m2;
     cout << "Mapa leido con operator>>: " << m2 << endl;
 
     // Copy Constructor
-    HashMap< HashMapTrait<int,int> > copia(m);
+    HashMap< AscendingMapTrait<T1,T1> > copia(m);
     cout << "Copy Constructor: " << copia << endl;
 
     // Move Constructor
-    HashMap< HashMapTrait<int,int> > movido(std::move(copia));
+    HashMap< AscendingMapTrait<T1,T1> > movido(std::move(copia));
     cout << "Move Constructor: " << movido << endl;
 
     cout << "Size: " << m.size() << endl;
