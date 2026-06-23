@@ -1,113 +1,72 @@
-//#include <iostream.h>
-#include <time.h>
-#include <stdlib.h>
+#include <iostream>
+#include <sstream>
 #include <string>
 #include "BTree.h"
+#include "../types.h"
 
-//const char * keys="CDAMPIWNBKEHOLJYQZFXVRTSGU";
-const char * keys1 = "D1XJ2xTg8zKL9AhijOPQcEowRSp0NbW567BUfCqrs4FdtYZakHIuvGV3eMylmn";
-const char * keys2 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-const char * keys3 = "DYZakHIUwxVJ203ejOP9Qc8AdtuEop1XvTRghSNbW567BfiCqrs4FGMyzKLlmn";
+using namespace std;
 
-const int BTreeSize = 3;
-void main(int argc, char * argv[], char * envp[])
+// =====================================================
+// DemoBTree: demuestra BTree<T1> con ForEach y FirstThat
+// variádicos — sin punteros a función estilo C.
+// Sigue el mismo patrón que DemoMinHeap/DemoMaxHeap.
+// =====================================================
+
+void DemoBTree()
 {
-       int result, i;
-       BTree <char> bt (BTreeSize);
-       for (i = 0; keys1[i]; i++)
-       {
-               //cout<<"Inserting "<<keys1[i]<<endl;
-               result = bt.Insert(keys1[i], i*i);
-               //bt.Print(cout);
-       }
-       bt.Print(cout);
-       /*for (i = 0; keys2[i]; i++)
-       {
-               cout << "Searching " << keys2[i] << " ";
-               long ObjID = bt.Search(keys2[i]);
-               if( ObjID != -1 )
-                       cout << "Achei " << keys2[i] << " ID = " << ObjID << endl;
-               else
-                       cout <<"Nao achei!" << keys2[i] << endl;
-       }*/
-       /*cout.flush();
+    cout << "\nTEST BTREE" << endl;
 
-       for (i = 0; keys3[i]; i++)
-       {
-               cout << "Removing " << keys3[i] << " ";
-               if( bt.Remove(keys3[i], -1) )
-                       cout << keys3[i] << " removido !" << endl;
-               else
-                       cout <<"Nao achei!" << keys3[i] << endl;
-               bt.Print(cout);
-       }
-       bt.Print(cout);
-       cout.flush();*/
-       return 1;
+    BTree<T1> bt(3);
+
+    // Inserción
+    const T1 keys[] = {50, 30, 70, 10, 40, 60, 80, 20, 90};
+    const size_t n  = sizeof(keys) / sizeof(keys[0]);
+
+    for (size_t i = 0; i < n; i++)
+        bt.Insert(keys[i], static_cast<long>(i));
+
+    cout << "Arbol luego de inserciones:" << endl;
+    bt.Print(cout);
+
+    cout << "Size   : " << bt.size()     << endl;
+    cout << "Height : " << bt.height()   << endl;
+    cout << "Order  : " << bt.GetOrder() << endl;
+
+    // ForEach variadic con lambda y argumento extra (ostream)
+    cout << "\nForEach (inorder con nivel):" << endl;
+    bt.ForEach(
+        [](tagObjectInfo<T1, long>& info, size_t level, ostream& os)
+        {
+            for (size_t i = 0; i < level; i++) os << "  ";
+            os << "key=" << info.key
+               << " id=" << info.ObjID << "\n";
+        },
+        cout
+    );
+
+    // FirstThat variadic con lambda y argumento extra (umbral)
+    cout << "\nFirstThat (primer elemento con key > 45):" << endl;
+    T1 umbral = 45;
+    auto* found = bt.FirstThat(
+        [](tagObjectInfo<T1, long>& info, size_t /*level*/, T1 threshold)
+        {
+            return info.key > threshold;
+        },
+        umbral
+    );
+
+    if (found)
+        cout << "Encontrado: key=" << found->key
+             << " id=" << found->ObjID << endl;
+    else
+        cout << "No encontrado." << endl;
+
+    // Search
+    cout << "\nSearch(40): ObjID = " << bt.Search(40) << endl;
+    cout << "Search(99): ObjID = " << bt.Search(99) << " (esperado -1)" << endl;
+
+    // Remove
+    bt.Remove(30, 0);
+    cout << "\nLuego de Remove(30):" << endl;
+    bt.Print(cout);
 }
-
-
-
-
-
-
-
-
-
-/*const char * keys="CDAMPIWNBKEHOLJYQZFXVRTSGU";
-const char * keys2="CDAMPIWNBKEHOLJYQZFXVRTSGU";
-const int BTreeSize = 3;
-main (int argc, char * argv)
-{
-       //__int64 li;
-       BTree <__int64> bt (BTreeSize);
-       for (register int i = 0; i < 1000000; i++)
-       {
-               //cout<<"Inserting "<<keys[i]<<endl;
-               bt.Insert(i, i-1);
-               //bt.Print(cout);
-       }
-
-       for (i = 0; i < 1000; i++)
-       {
-               __int64 key = 975000+(::rand()%50000);
-               //cout << "Searching " << (long)key << " ";
-               long ObjID = bt.Search(key);
-               if( ObjID != -1 )
-                       cout << "Achei " << (long)key << " ID = " << ObjID << endl;
-               else
-                       cout <<"  Nao achei!" << (long)key << endl;
-       }
-       cout.flush();
-
-       return 1;
-}*/
-
-
-
-/*const int BTreeSize = 3;
-main (int argc, char * argv)
-{
-       int result, i;
-       BTree <LONGLONG> bt(BTreeSize);
-       result = bt.Create ("ernesto3-string-btree-start.dat",ios::in|ios::out);
-       if (!result) { cout<<"Please delete testbt.dat"<<endl;return 0; }
-       srand( (unsigned)time( NULL ) );
-       LARGE_INTEGER key;
-       for (i = 0; i < 1000000; i++)
-       {
-               //cout<<"Inserting "<<keys[i]<<endl;
-               char strTmp[50];
-               key.LowPart = rand();
-               key.HighPart = rand();
-               std::string str(strTmp);
-               result = bt.Insert(key.QuadPart, i);
-               //bt.Print(cout);
-               if( i % 100000 == 0 )
-               {       cout << i << endl; cout.flush();        }
-       }
-       //cout << "Searching D " << bt.Search();
-       //bt.Search(1,1);
-       cout.flush();
-       return 1;
-}*/
