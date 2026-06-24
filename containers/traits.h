@@ -1,9 +1,10 @@
 #ifndef __TRAITS_H__
 #define __TRAITS_H__
 #include <functional>
+#include "BTreePage.h"
 
 // =====================================================
-// BaseTrait: base para contenedores con nodos directos
+// BaseTrait: para contenedores con nodos directos
 // (LinkedList, AVL). _Node debe tener value_type.
 // =====================================================
 
@@ -24,7 +25,6 @@ struct DescendingTrait
 
 // =====================================================
 // BaseHeapTrait: para Heap (compone Vector, no nodos)
-// Solo expone value_type y Comp.
 // =====================================================
 
 template <typename T, typename _Comp>
@@ -34,11 +34,14 @@ struct BaseHeapTrait {
 };
 
 // =====================================================
-// BTree Traits: mismo patrón que MinHeapTrait/MaxHeapTrait.
-// BTree compone páginas internas, no nodos directos,
-// por eso el Trait solo expone value_type, ObjIDType y Comp.
+// BTree Traits:
+// - value_type, ObjIDType, Comp vienen del Trait
+// - Page = CBTreePage<Trait> se define DENTRO del Trait
+//   (mismo patrón que Node = AVLTreeNode<...> en HashMapTrait)
 //
-// ObjIDType = long por defecto (ID del objeto almacenado).
+// Uso:
+//   BTree< AscendingBTreeTrait<T1> > bt;
+//   BTree< DescendingBTreeTrait<T1> > bt;
 // =====================================================
 
 template<typename T, typename O = long>
@@ -46,6 +49,7 @@ struct AscendingBTreeTrait {
     using value_type = T;
     using ObjIDType  = O;
     using Comp       = std::less<T>;
+    using Page       = CBTreePage< AscendingBTreeTrait<T,O> >;
 };
 
 template<typename T, typename O = long>
@@ -53,6 +57,7 @@ struct DescendingBTreeTrait {
     using value_type = T;
     using ObjIDType  = O;
     using Comp       = std::greater<T>;
+    using Page       = CBTreePage< DescendingBTreeTrait<T,O> >;
 };
 
 #endif // __TRAITS_H__

@@ -2,7 +2,6 @@
 #define BTREE_H
 
 #include <iostream>
-#include "BTreePage.h"
 #include "traits.h"
 #include "../types.h"
 
@@ -11,13 +10,14 @@ using namespace std;
 #define DEFAULT_BTREE_ORDER 3
 
 // =====================================================
-// BTree: recibe un Trait (mismo patrón que LinkedList,
-// Heap y HashMap).
+// BTree: recibe Trait completo (mismo patrón que
+// LinkedList<Trait>, Heap<Trait>, HashMap<Trait>).
 //
-// Trait debe exponer:
+// Del Trait extrae:
 //   value_type  — tipo de las claves
-//   ObjIDType   — tipo del identificador de objeto
-//   Comp        — comparador (less<T> o greater<T>)
+//   ObjIDType   — tipo del identificador almacenado
+//   Comp        — comparador (less / greater)
+//   Page        — CBTreePage<Trait> definido en el Trait
 //
 // Uso:
 //   BTree< AscendingBTreeTrait<T1> > bt;
@@ -32,7 +32,7 @@ public:
     using ObjIDType  = typename Trait::ObjIDType;
     using Comp       = typename Trait::Comp;
     using MySelf     = BTree<Trait>;
-    using BTNode     = CBTreePage<value_type, ObjIDType, Comp>;
+    using BTNode     = typename Trait::Page;
     using ObjectInfo = tagObjectInfo<value_type, ObjIDType>;
 
 public:
@@ -49,18 +49,14 @@ public:
 
     void Print(ostream& os) { m_Root.Print(os); }
 
-    // =====================================================
-    // ForEach variadic: pasa func y args a CBTreePage
-    // =====================================================
+    // ForEach variadic
     template <typename Func, typename... Args>
     void ForEach(Func func, Args&&... args)
     {
         m_Root.ForEach(func, (size_t)0, forward<Args>(args)...);
     }
 
-    // =====================================================
-    // FirstThat variadic: retorna ObjectInfo* o nullptr
-    // =====================================================
+    // FirstThat variadic
     template <typename Func, typename... Args>
     ObjectInfo* FirstThat(Func func, Args&&... args)
     {
@@ -92,10 +88,7 @@ bool BTree<Trait>::Insert(const value_type key, const ObjIDType ObjID)
     bt_ErrorCode error = m_Root.Insert(key, ObjID);
     if (error == bt_duplicate) return false;
     m_NumKeys++;
-    if (error == bt_overflow) {
-        m_Root.SplitRoot();
-        m_Height++;
-    }
+    if (error == bt_overflow) { m_Root.SplitRoot(); m_Height++; }
     return true;
 }
 
