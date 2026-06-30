@@ -1,4 +1,5 @@
 #include <iostream>
+#include <sstream>
 #include "BTree.h"
 #include "../types.h"
 
@@ -22,7 +23,7 @@ void DemoBTree()
         bt.Insert(keys[i], static_cast<long>(i));
 
     cout << "Arbol luego de inserciones:" << endl;
-    bt.Print(cout);
+    cout << bt;
     cout << "Size   : " << bt.size()     << endl;
     cout << "Height : " << bt.height()   << endl;
     cout << "Order  : " << bt.GetOrder() << endl;
@@ -56,13 +57,28 @@ void DemoBTree()
 
     bt.Remove(30, 0);
     cout << "\nLuego de Remove(30):" << endl;
-    bt.Print(cout);
+    cout << bt;
 
     // Mismo contenedor, Trait descendente
     cout << "\nTEST BTREE (Descendente)" << endl;
     BTree< DescendingBTreeTrait<T1> > bt2(3);
     for (size_t i = 0; i < n; i++)
         bt2.Insert(keys[i], static_cast<long>(i));
-    cout << "Arbol descendente:" << endl;
-    bt2.Print(cout);
+    cout << "Arbol descendente (ForEachReverse):" << endl;
+    bt2.ForEachReverse(
+        [](tagObjectInfo<T1,long>& info, size_t level, ostream& os) {
+            for (size_t i = 0; i < level; i++) os << "  ";
+            os << "key=" << info.key << " id=" << info.ObjID << "\n";
+        },
+        cout
+    );
+
+    // operator>> — leer árbol desde stream
+    cout << "\nBTree leido con operator>>:" << endl;
+    BTree< AscendingBTreeTrait<T1> > bt3(3);
+    {
+        stringstream ss("1:100 2:200 3:300 4:400 5:500");
+        ss >> bt3;
+    }
+    cout << bt3;
 }

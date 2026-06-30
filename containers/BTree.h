@@ -47,8 +47,6 @@ public:
     long   height()   { return m_Height;  }
     size_t GetOrder() { return m_Order;   }
 
-    void Print(ostream& os) { m_Root.Print(os); }
-
     // ForEach variadic
     template <typename Func, typename... Args>
     void ForEach(Func func, Args&&... args)
@@ -56,11 +54,48 @@ public:
         m_Root.ForEach(func, (size_t)0, forward<Args>(args)...);
     }
 
-    // FirstThat variadic
+    // FirstThat variadic (forward)
     template <typename Func, typename... Args>
     ObjectInfo* FirstThat(Func func, Args&&... args)
     {
         return m_Root.FirstThat(func, (size_t)0, forward<Args>(args)...);
+    }
+
+    // ForEach backward (inorder descendente)
+    template <typename Func, typename... Args>
+    void ForEachReverse(Func func, Args&&... args)
+    {
+        m_Root.ForEachReverse(func, (size_t)0, forward<Args>(args)...);
+    }
+
+    // FirstThat backward
+    template <typename Func, typename... Args>
+    ObjectInfo* FirstThatReverse(Func func, Args&&... args)
+    {
+        return m_Root.FirstThatReverse(func, (size_t)0, forward<Args>(args)...);
+    }
+
+    // operator<<: imprime el árbol usando ForEach (ya no usa Print helper)
+    friend ostream& operator<<(ostream& os, BTree& bt)
+    {
+        bt.m_Root.ForEach(
+            [](ObjectInfo& info, size_t level, ostream& out) {
+                for (size_t i = 0; i < level; i++) out << "\t";
+                out << info.key << "->" << info.ObjID << "\n";
+            },
+            (size_t)0, os);
+        return os;
+    }
+
+    // operator>>: lee pares "key:id" separados por espacios
+    friend istream& operator>>(istream& is, BTree& bt)
+    {
+        value_type key;
+        ObjIDType  id;
+        char       colon;
+        while (is >> key >> colon >> id)
+            bt.Insert(key, id);
+        return is;
     }
 
 protected:

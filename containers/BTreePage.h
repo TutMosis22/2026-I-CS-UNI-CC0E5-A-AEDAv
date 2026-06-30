@@ -3,7 +3,10 @@
 
 #include <vector>
 #include <iostream>
+#include <sstream>
 #include <cassert>
+#include <mutex>
+#include <shared_mutex>
 #include "../types.h"
 
 using namespace std;
@@ -91,44 +94,191 @@ public:
     bt_ErrorCode Insert(const value_type& key, const ObjIDType ObjID);
     bt_ErrorCode Remove(const value_type& key, const ObjIDType ObjID);
     bool         Search(const value_type& key, ObjIDType& ObjID);
-    void         Print(ostream& os);
 
-    // ForEach variadic
-    template <typename Func, typename... Args>
-    void ForEach(Func func, size_t level, Args&&... args)
+    // =====================================================
+    // traverse: bucle unificado para ForEach y FirstThat.
+    // StopOnFound=false  -> ForEach (visita todos)
+    // StopOnFound=true   -> FirstThat (para en el primero)
+    // dir=0 forward, dir=1 backward
+    // =====================================================
+    template <bool StopOnFound, int dir, typename Func, typename... Args>
+    ObjectInfo* traverse(Func func, size_t level, Args&&... args)
     {
-        for (size_t i = 0; i < m_KeyCount; i++) {
-            if (m_SubPages[i])
-                m_SubPages[i]->ForEach(func, level + 1,
-                                       forward<Args>(args)...);
-            func(m_Keys[i], level, forward<Args>(args)...);
-        }
-        if (m_SubPages[m_KeyCount])
-            m_SubPages[m_KeyCount]->ForEach(func, level + 1,
-                                            forward<Args>(args)...);
-    }
+        // Rango de índices según dirección
+        size_t first = (dir == 0) ? 0 : m_KeyCount;
+        size_t last  = (dir == 0) ? m_KeyCount : 0;
+        size_t step  = (dir == 0) ? 1 : static_cast<size_t>(-1);
 
-    // FirstThat variadic
-    template <typename Func, typename... Args>
-    ObjectInfo* FirstThat(Func func, size_t level, Args&&... args)
-    {
-        ObjectInfo* pTmp = nullptr;
-        for (size_t i = 0; i < m_KeyCount; i++) {
-            if (m_SubPages[i]) {
-                pTmp = m_SubPages[i]->FirstThat(func, level + 1,
-                                                forward<Args>(args)...);
-                if (pTmp) return pTmp;
+        size_t i = first;
+        while (true) {
+            // Subpágina izquierda (forward) o derecha (backward)
+            size_t sub = (dir == 0) ? i : i;
+            if (m_SubPages[sub]) {
+                ObjectInfo* p = m_SubPages[sub]->template traverse<StopOnFound, dir>(
+                    func, level + 1, forward<Args>(args)...);
+                if (StopOnFound && p) return p;
             }
-            if (func(m_Keys[i], level, forward<Args>(args)...))
-                return &m_Keys[i];
+
+            if ((dir == 0 && i >= m_KeyCount) ||
+                (dir == 1 && i == 0 && first == m_KeyCount))
+                break;
+
+            // Visitar clave actual
+            if (dir == 1 && i == 0) {
+                if (func(m_Keys[i], level, forward<Args>(args)...))
+                    if (StopOnFound) return &m_Keys[i];
+                break;
+            }
+            size_t ki = (dir == 0) ? i : i - 1;
+            if (func(m_Keys[ki], level, forward<Args>(args)...))
+                if (StopOnFound) return &m_Keys[ki];
+
+            if (dir == 0) { i += step; if (i > m_KeyCount) break; }
+            else          { if (i == 0) break; i += step; }
         }
-        if (m_SubPages[m_KeyCount]) {
-            pTmp = m_SubPages[m_KeyCount]->FirstThat(func, level + 1,
-                                                     forward<Args>(args)...);
-            if (pTmp) return pTmp;
+
+        // Subpágina del extremo opuesto
+        size_t last_sub = (dir == 0) ? m_KeyCount : 0;
+        if (m_SubPages[last_sub]) {
+            ObjectInfo* p = m_SubPages[last_sub]->template traverse<StopOnFound, dir>(
+                func, level + 1, forward<Args>(args)...);
+            if (StopOnFound && p) return p;
         }
         return nullptr;
     }
+
+    // ForEach forward (inorder ascendente) — con lock compartido
+    template <typename Func, typename... Args>
+    void ForEach(Func func, size_t level, Args&&... args)
+    {
+        shared_lock<shared_mutex> lock(m_mtx);
+        internal_forEach<0>(func, level, forward<Args>(args)...);
+    }
+
+    // ForEach backward (inorder descendente)
+    template <typename Func, typename... Args>
+    void ForEachReverse(Func func, size_t level, Args&&... args)
+    {
+        shared_lock<shared_mutex> lock(m_mtx);
+        internal_forEach<1>(func, level, forward<Args>(args)...);
+    }
+
+    // FirstThat forward
+    template <typename Func, typename... Args>
+    ObjectInfo* FirstThat(Func func, size_t level, Args&&... args)
+    {
+        shared_lock<shared_mutex> lock(m_mtx);
+        return internal_firstThat<0>(func, level, forward<Args>(args)...);
+    }
+
+    // FirstThat backward
+    template <typename Func, typename... Args>
+    ObjectInfo* FirstThatReverse(Func func, size_t level, Args&&... args)
+    {
+        shared_lock<shared_mutex> lock(m_mtx);
+        return internal_firstThat<1>(func, level, forward<Args>(args)...);
+    }
+
+    // operator<< — delega en ForEach via toString
+    string toString() const {
+        ostringstream oss;
+        const_cast<CBTreePage*>(this)->internal_forEach<0>(
+            [](ObjectInfo& info, size_t level, ostringstream& os) {
+                for (size_t i = 0; i < level; i++) os << "\t";
+                os << info.key << "->" << info.ObjID << "\n";
+            }, (size_t)0, oss);
+        return oss.str();
+    }
+
+    friend ostream& operator<<(ostream& os, CBTreePage& page) {
+        return os << page.toString();
+    }
+
+    // operator>> — inserta claves desde stream "key:id key:id ..."
+    friend istream& operator>>(istream& is, CBTreePage& page) {
+        unique_lock<shared_mutex> lock(page.m_mtx);
+        typename CBTreePage::value_type  key;
+        typename CBTreePage::ObjIDType   id;
+        char colon;
+        while (is >> key >> colon >> id)
+            page.Insert(key, id);
+        return is;
+    }
+
+private:
+    // Bucle interno forward (dir=0) / backward (dir=1) para ForEach
+    template <int dir, typename Func, typename... Args>
+    void internal_forEach(Func func, size_t level, Args&&... args)
+    {
+        if (dir == 0) {
+            for (size_t i = 0; i <= m_KeyCount; i++) {
+                if (i < m_KeyCount) {
+                    if (m_SubPages[i])
+                        m_SubPages[i]->template internal_forEach<dir>(
+                            func, level + 1, forward<Args>(args)...);
+                    func(m_Keys[i], level, forward<Args>(args)...);
+                } else {
+                    if (m_SubPages[i])
+                        m_SubPages[i]->template internal_forEach<dir>(
+                            func, level + 1, forward<Args>(args)...);
+                }
+            }
+        } else {
+            if (m_SubPages[m_KeyCount])
+                m_SubPages[m_KeyCount]->template internal_forEach<dir>(
+                    func, level + 1, forward<Args>(args)...);
+            for (size_t i = m_KeyCount; i-- > 0; ) {
+                func(m_Keys[i], level, forward<Args>(args)...);
+                if (m_SubPages[i])
+                    m_SubPages[i]->template internal_forEach<dir>(
+                        func, level + 1, forward<Args>(args)...);
+            }
+        }
+    }
+
+    // Bucle interno forward/backward para FirstThat
+    template <int dir, typename Func, typename... Args>
+    ObjectInfo* internal_firstThat(Func func, size_t level, Args&&... args)
+    {
+        ObjectInfo* pTmp = nullptr;
+        if (dir == 0) {
+            for (size_t i = 0; i <= m_KeyCount; i++) {
+                if (i < m_KeyCount) {
+                    if (m_SubPages[i]) {
+                        pTmp = m_SubPages[i]->template internal_firstThat<dir>(
+                            func, level + 1, forward<Args>(args)...);
+                        if (pTmp) return pTmp;
+                    }
+                    if (func(m_Keys[i], level, forward<Args>(args)...))
+                        return &m_Keys[i];
+                } else {
+                    if (m_SubPages[i]) {
+                        pTmp = m_SubPages[i]->template internal_firstThat<dir>(
+                            func, level + 1, forward<Args>(args)...);
+                        if (pTmp) return pTmp;
+                    }
+                }
+            }
+        } else {
+            if (m_SubPages[m_KeyCount]) {
+                pTmp = m_SubPages[m_KeyCount]->template internal_firstThat<dir>(
+                    func, level + 1, forward<Args>(args)...);
+                if (pTmp) return pTmp;
+            }
+            for (size_t i = m_KeyCount; i-- > 0; ) {
+                if (func(m_Keys[i], level, forward<Args>(args)...))
+                    return &m_Keys[i];
+                if (m_SubPages[i]) {
+                    pTmp = m_SubPages[i]->template internal_firstThat<dir>(
+                        func, level + 1, forward<Args>(args)...);
+                    if (pTmp) return pTmp;
+                }
+            }
+        }
+        return nullptr;
+    }
+
+public:
 
 protected:
     size_t m_MinKeys;
@@ -141,6 +291,7 @@ protected:
     vector<BTPage*>    m_SubPages;
     size_t             m_KeyCount;
     Comp               m_comp;
+    mutable shared_mutex m_mtx;
 
     void Create();
     void Reset();
@@ -484,15 +635,6 @@ CBTreePage<Trait>::GetFirstObjectInfo()
 {
     if (m_SubPages[0]) return m_SubPages[0]->GetFirstObjectInfo();
     return m_Keys[0];
-}
-
-template <typename Trait>
-void CBTreePage<Trait>::Print(ostream& os)
-{
-    ForEach([](tagObjectInfo<value_type, ObjIDType>& info, size_t level, ostream& out) {
-        for (size_t i = 0; i < level; i++) out << "\t";
-        out << info.key << "->" << info.ObjID << "\n";
-    }, (size_t)0, os);
 }
 
 template <typename Trait>
