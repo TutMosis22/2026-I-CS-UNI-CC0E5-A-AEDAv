@@ -7,6 +7,7 @@
 #include <cassert>
 #include <mutex>
 #include <shared_mutex>
+#include <stack>
 #include "../types.h"
 
 using namespace std;
@@ -30,10 +31,6 @@ struct tagObjectInfo
     operator keyType() { return key; }
     long GetUseCounter() { return UseCounter; }
 };
-
-// =====================================================
-// Helpers: size_t en todos los índices
-// =====================================================
 
 template <typename Container, typename ObjType>
 size_t binary_search(Container& container,
@@ -68,24 +65,183 @@ void remove_at(Container& container, size_t pos)
 }
 
 // =====================================================
+// Forward declaration para los iteradores
+// =====================================================
+template <typename Trait> class CBTreePage;
+template <typename Trait> class BTreeForwardIterator;
+template <typename Trait> class BTreeBackwardIterator;
+
+// =====================================================
+// BTreeForwardIterator: recorre el árbol inorder
+// ascendente usando una pila explícita.
+//
+// Estado: pila de (página, índice_de_clave).
+// operator++ avanza al siguiente elemento inorder.
+// =====================================================
+template <typename Trait>
+class BTreeForwardIterator {
+public:
+    using Page       = CBTreePage<Trait>;
+    using ObjectInfo = typename Page::ObjectInfo;
+
+    // Frame: página actual + índice de la clave que toca visitar
+    struct Frame {
+        Page*  page;
+        size_t keyIdx;   // siguiente clave a visitar en esta página
+        bool   visited;  // si ya se bajó al subárbol izquierdo
+        Frame(Page* p, size_t k) : page(p), keyIdx(k), visited(false) {}
+    };
+
+private:
+    stack<Frame> m_stack;
+    ObjectInfo*  m_current;
+
+    // Desciende al hijo más a la izquierda desde 'page'
+    // apilando todos los frames en el camino
+    void push_leftmost(Page* page, size_t startKey = 0) {
+        while (page) {
+            m_stack.push(Frame(page, startKey));
+            page     = page->m_SubPages[startKey];
+            startKey = 0;
+        }
+    }
+
+    void advance() {
+        m_current = nullptr;
+        while (!m_stack.empty()) {
+            Frame& f = m_stack.top();
+            if (f.keyIdx < f.page->m_KeyCount) {
+                // Visitar la clave f.keyIdx
+                m_current = &f.page->m_Keys[f.keyIdx];
+                // Preparar descenso al hijo derecho de esta clave
+                Page* right = f.page->m_SubPages[f.keyIdx + 1];
+                f.keyIdx++;
+                if (right) push_leftmost(right, 0);
+                return;
+            }
+            m_stack.pop();
+        }
+    }
+
+public:
+    // Constructor begin: apila desde la raíz
+    BTreeForwardIterator(Page* root) : m_current(nullptr) {
+        if (root && root->m_KeyCount > 0)
+            push_leftmost(root, 0);
+        advance();
+    }
+
+    // Constructor end
+    BTreeForwardIterator() : m_current(nullptr) {}
+
+    ObjectInfo& operator*()  const { return *m_current; }
+    ObjectInfo* operator->() const { return  m_current; }
+
+    BTreeForwardIterator& operator++() {
+        advance();
+        return *this;
+    }
+
+    bool operator!=(const BTreeForwardIterator& other) const {
+        return m_current != other.m_current;
+    }
+    bool operator==(const BTreeForwardIterator& other) const {
+        return m_current == other.m_current;
+    }
+};
+
+// =====================================================
+// BTreeBackwardIterator: recorre el árbol inorder
+// descendente (orden inverso) usando una pila explícita.
+// =====================================================
+template <typename Trait>
+class BTreeBackwardIterator {
+public:
+    using Page       = CBTreePage<Trait>;
+    using ObjectInfo = typename Page::ObjectInfo;
+
+    struct Frame {
+        Page*  page;
+        size_t keyIdx;  // siguiente clave a visitar (decrece)
+        Frame(Page* p, size_t k) : page(p), keyIdx(k) {}
+    };
+
+private:
+    stack<Frame> m_stack;
+    ObjectInfo*  m_current;
+
+    // Desciende al hijo más a la derecha desde 'page'
+    void push_rightmost(Page* page) {
+        while (page) {
+            size_t k = page->m_KeyCount; // apuntar más allá de la última clave
+            m_stack.push(Frame(page, k));
+            page = page->m_SubPages[k];  // hijo más a la derecha
+        }
+    }
+
+    void advance() {
+        m_current = nullptr;
+        while (!m_stack.empty()) {
+            Frame& f = m_stack.top();
+            if (f.keyIdx > 0) {
+                f.keyIdx--;
+                // Visitar la clave f.keyIdx
+                m_current = &f.page->m_Keys[f.keyIdx];
+                // Bajar al hijo izquierdo de esta clave
+                Page* left = f.page->m_SubPages[f.keyIdx];
+                if (left) push_rightmost(left);
+                return;
+            }
+            m_stack.pop();
+        }
+    }
+
+public:
+    BTreeBackwardIterator(Page* root) : m_current(nullptr) {
+        if (root && root->m_KeyCount > 0)
+            push_rightmost(root);
+        advance();
+    }
+
+    BTreeBackwardIterator() : m_current(nullptr) {}
+
+    ObjectInfo& operator*()  const { return *m_current; }
+    ObjectInfo* operator->() const { return  m_current; }
+
+    BTreeBackwardIterator& operator++() {
+        advance();
+        return *this;
+    }
+
+    bool operator!=(const BTreeBackwardIterator& other) const {
+        return m_current != other.m_current;
+    }
+    bool operator==(const BTreeBackwardIterator& other) const {
+        return m_current == other.m_current;
+    }
+};
+
+// =====================================================
 // CBTreePage: recibe Trait completo.
-// Del Trait extrae: value_type, ObjIDType, Comp.
-// El Trait también expone Page = CBTreePage<Trait>
-// (definido en traits.h junto a los demás traits).
+// ForEach y FirstThat usan los iteradores —
+// UN SOLO bucle for parametrizado por el iterador.
 // =====================================================
 
 template <typename Trait>
 class CBTreePage
 {
-    // BTree<Trait> es friend genérico
     template <typename AnyTrait> friend class BTree;
+    template <typename T> friend class BTreeForwardIterator;
+    template <typename T> friend class BTreeBackwardIterator;
 
 public:
-    using value_type = typename Trait::value_type;
-    using ObjIDType  = typename Trait::ObjIDType;
-    using Comp       = typename Trait::Comp;
-    using ObjectInfo = tagObjectInfo<value_type, ObjIDType>;
-    using BTPage     = CBTreePage<Trait>;
+    using value_type         = typename Trait::value_type;
+    using ObjIDType          = typename Trait::ObjIDType;
+    using Comp               = typename Trait::Comp;
+    using ObjectInfo         = tagObjectInfo<value_type, ObjIDType>;
+    using BTPage             = CBTreePage<Trait>;
+    using forward_iterator   = BTreeForwardIterator<Trait>;
+    using backward_iterator  = BTreeBackwardIterator<Trait>;
 
 public:
     CBTreePage(size_t maxKeys, bool unique = true);
@@ -95,98 +251,92 @@ public:
     bt_ErrorCode Remove(const value_type& key, const ObjIDType ObjID);
     bool         Search(const value_type& key, ObjIDType& ObjID);
 
+    // Acceso a iteradores
+    forward_iterator  begin()  { return forward_iterator(this); }
+    forward_iterator  end()    { return forward_iterator(); }
+    backward_iterator rbegin() { return backward_iterator(this); }
+    backward_iterator rend()   { return backward_iterator(); }
+
     // =====================================================
-    // traverse: bucle unificado para ForEach y FirstThat.
-    // StopOnFound=false  -> ForEach (visita todos)
-    // StopOnFound=true   -> FirstThat (para en el primero)
-    // dir=0 forward, dir=1 backward
+    // ForEach: UN SOLO bucle usando forward_iterator.
+    // ForEachReverse: el mismo bucle con backward_iterator.
+    // FirstThat: el mismo bucle, para en el primero true.
+    // FirstThatReverse: backward + para en el primero true.
+    //
+    // La unificación está en apply(): un solo for que recibe
+    // cualquier iterador y cualquier functor.
     // =====================================================
-    template <bool StopOnFound, int dir, typename Func, typename... Args>
-    ObjectInfo* traverse(Func func, size_t level, Args&&... args)
+
+    // =====================================================
+    // apply: UN SOLO bucle que sirve tanto para ForEach
+    // como para FirstThat, forward y backward.
+    //
+    // Recibe cualquier iterador y cualquier Func.
+    // - Si Func retorna void  → recorre todo (ForEach)
+    // - Si Func retorna bool  → para en el primero true
+    //                           (FirstThat)
+    // La distinción se hace en tiempo de compilación con
+    // if constexpr — sin overhead de runtime.
+    // =====================================================
+    template <typename Iterator, typename Func, typename... Args>
+    ObjectInfo* apply(Iterator it, Iterator end_it,
+                      Func func, Args&&... args)
     {
-        // Rango de índices según dirección
-        size_t first = (dir == 0) ? 0 : m_KeyCount;
-        size_t last  = (dir == 0) ? m_KeyCount : 0;
-        size_t step  = (dir == 0) ? 1 : static_cast<size_t>(-1);
-
-        size_t i = first;
-        while (true) {
-            // Subpágina izquierda (forward) o derecha (backward)
-            size_t sub = (dir == 0) ? i : i;
-            if (m_SubPages[sub]) {
-                ObjectInfo* p = m_SubPages[sub]->template traverse<StopOnFound, dir>(
-                    func, level + 1, forward<Args>(args)...);
-                if (StopOnFound && p) return p;
+        for (; it != end_it; ++it) {
+            if constexpr (is_same_v<
+                decltype(func(*it, forward<Args>(args)...)), bool>)
+            {
+                // FirstThat: para si la función retorna true
+                if (func(*it, forward<Args>(args)...))
+                    return &(*it);
+            } else {
+                // ForEach: siempre visita, ignora retorno
+                func(*it, forward<Args>(args)...);
             }
-
-            if ((dir == 0 && i >= m_KeyCount) ||
-                (dir == 1 && i == 0 && first == m_KeyCount))
-                break;
-
-            // Visitar clave actual
-            if (dir == 1 && i == 0) {
-                if (func(m_Keys[i], level, forward<Args>(args)...))
-                    if (StopOnFound) return &m_Keys[i];
-                break;
-            }
-            size_t ki = (dir == 0) ? i : i - 1;
-            if (func(m_Keys[ki], level, forward<Args>(args)...))
-                if (StopOnFound) return &m_Keys[ki];
-
-            if (dir == 0) { i += step; if (i > m_KeyCount) break; }
-            else          { if (i == 0) break; i += step; }
-        }
-
-        // Subpágina del extremo opuesto
-        size_t last_sub = (dir == 0) ? m_KeyCount : 0;
-        if (m_SubPages[last_sub]) {
-            ObjectInfo* p = m_SubPages[last_sub]->template traverse<StopOnFound, dir>(
-                func, level + 1, forward<Args>(args)...);
-            if (StopOnFound && p) return p;
         }
         return nullptr;
     }
 
-    // ForEach forward (inorder ascendente) — con lock compartido
+    // ForEach forward — shared lock, apply con forward_iterator
     template <typename Func, typename... Args>
-    void ForEach(Func func, size_t level, Args&&... args)
+    void ForEach(Func func, size_t /*level*/, Args&&... args)
     {
         shared_lock<shared_mutex> lock(m_mtx);
-        internal_forEach<0>(func, level, forward<Args>(args)...);
+        apply(begin(), end(), func, forward<Args>(args)...);
     }
 
-    // ForEach backward (inorder descendente)
+    // ForEach backward — shared lock, apply con backward_iterator
     template <typename Func, typename... Args>
-    void ForEachReverse(Func func, size_t level, Args&&... args)
+    void ForEachReverse(Func func, size_t /*level*/, Args&&... args)
     {
         shared_lock<shared_mutex> lock(m_mtx);
-        internal_forEach<1>(func, level, forward<Args>(args)...);
+        apply(rbegin(), rend(), func, forward<Args>(args)...);
     }
 
     // FirstThat forward
     template <typename Func, typename... Args>
-    ObjectInfo* FirstThat(Func func, size_t level, Args&&... args)
+    ObjectInfo* FirstThat(Func func, size_t /*level*/, Args&&... args)
     {
         shared_lock<shared_mutex> lock(m_mtx);
-        return internal_firstThat<0>(func, level, forward<Args>(args)...);
+        return apply(begin(), end(), func, forward<Args>(args)...);
     }
 
     // FirstThat backward
     template <typename Func, typename... Args>
-    ObjectInfo* FirstThatReverse(Func func, size_t level, Args&&... args)
+    ObjectInfo* FirstThatReverse(Func func, size_t /*level*/, Args&&... args)
     {
         shared_lock<shared_mutex> lock(m_mtx);
-        return internal_firstThat<1>(func, level, forward<Args>(args)...);
+        return apply(rbegin(), rend(), func, forward<Args>(args)...);
     }
 
-    // operator<< — delega en ForEach via toString
+    // toString: reutiliza ForEach
     string toString() const {
         ostringstream oss;
-        const_cast<CBTreePage*>(this)->internal_forEach<0>(
-            [](ObjectInfo& info, size_t level, ostringstream& os) {
-                for (size_t i = 0; i < level; i++) os << "\t";
+        const_cast<BTPage*>(this)->ForEach(
+            [](ObjectInfo& info, ostringstream& os) {
                 os << info.key << "->" << info.ObjID << "\n";
-            }, (size_t)0, oss);
+            },
+            (size_t)0, oss);
         return oss.str();
     }
 
@@ -194,91 +344,15 @@ public:
         return os << page.toString();
     }
 
-    // operator>> — inserta claves desde stream "key:id key:id ..."
     friend istream& operator>>(istream& is, CBTreePage& page) {
         unique_lock<shared_mutex> lock(page.m_mtx);
-        typename CBTreePage::value_type  key;
-        typename CBTreePage::ObjIDType   id;
-        char colon;
+        value_type key;
+        ObjIDType  id;
+        char       colon;
         while (is >> key >> colon >> id)
             page.Insert(key, id);
         return is;
     }
-
-private:
-    // Bucle interno forward (dir=0) / backward (dir=1) para ForEach
-    template <int dir, typename Func, typename... Args>
-    void internal_forEach(Func func, size_t level, Args&&... args)
-    {
-        if (dir == 0) {
-            for (size_t i = 0; i <= m_KeyCount; i++) {
-                if (i < m_KeyCount) {
-                    if (m_SubPages[i])
-                        m_SubPages[i]->template internal_forEach<dir>(
-                            func, level + 1, forward<Args>(args)...);
-                    func(m_Keys[i], level, forward<Args>(args)...);
-                } else {
-                    if (m_SubPages[i])
-                        m_SubPages[i]->template internal_forEach<dir>(
-                            func, level + 1, forward<Args>(args)...);
-                }
-            }
-        } else {
-            if (m_SubPages[m_KeyCount])
-                m_SubPages[m_KeyCount]->template internal_forEach<dir>(
-                    func, level + 1, forward<Args>(args)...);
-            for (size_t i = m_KeyCount; i-- > 0; ) {
-                func(m_Keys[i], level, forward<Args>(args)...);
-                if (m_SubPages[i])
-                    m_SubPages[i]->template internal_forEach<dir>(
-                        func, level + 1, forward<Args>(args)...);
-            }
-        }
-    }
-
-    // Bucle interno forward/backward para FirstThat
-    template <int dir, typename Func, typename... Args>
-    ObjectInfo* internal_firstThat(Func func, size_t level, Args&&... args)
-    {
-        ObjectInfo* pTmp = nullptr;
-        if (dir == 0) {
-            for (size_t i = 0; i <= m_KeyCount; i++) {
-                if (i < m_KeyCount) {
-                    if (m_SubPages[i]) {
-                        pTmp = m_SubPages[i]->template internal_firstThat<dir>(
-                            func, level + 1, forward<Args>(args)...);
-                        if (pTmp) return pTmp;
-                    }
-                    if (func(m_Keys[i], level, forward<Args>(args)...))
-                        return &m_Keys[i];
-                } else {
-                    if (m_SubPages[i]) {
-                        pTmp = m_SubPages[i]->template internal_firstThat<dir>(
-                            func, level + 1, forward<Args>(args)...);
-                        if (pTmp) return pTmp;
-                    }
-                }
-            }
-        } else {
-            if (m_SubPages[m_KeyCount]) {
-                pTmp = m_SubPages[m_KeyCount]->template internal_firstThat<dir>(
-                    func, level + 1, forward<Args>(args)...);
-                if (pTmp) return pTmp;
-            }
-            for (size_t i = m_KeyCount; i-- > 0; ) {
-                if (func(m_Keys[i], level, forward<Args>(args)...))
-                    return &m_Keys[i];
-                if (m_SubPages[i]) {
-                    pTmp = m_SubPages[i]->template internal_firstThat<dir>(
-                        func, level + 1, forward<Args>(args)...);
-                    if (pTmp) return pTmp;
-                }
-            }
-        }
-        return nullptr;
-    }
-
-public:
 
 protected:
     size_t m_MinKeys;
@@ -513,7 +587,9 @@ void CBTreePage<Trait>::SplitPageInto3(
     pChild1->clear();
     size_t nKeys = (tmpKeys.size()-2)/3, i = 0;
     for (; i < nKeys; i++) {
-        pChild1->m_Keys[i] = tmpKeys[i]; pChild1->m_SubPages[i] = tmpSubPages[i]; pChild1->NumberOfKeys()++;
+        pChild1->m_Keys[i] = tmpKeys[i];
+        pChild1->m_SubPages[i] = tmpSubPages[i];
+        pChild1->NumberOfKeys()++;
     }
     pChild1->m_SubPages[i] = tmpSubPages[i]; oi1 = tmpKeys[i++];
 
@@ -522,7 +598,9 @@ void CBTreePage<Trait>::SplitPageInto3(
     nKeys += (tmpKeys.size()-2)/3+1;
     size_t j = 0;
     for (; i < nKeys; i++, j++) {
-        pChild2->m_Keys[j] = tmpKeys[i]; pChild2->m_SubPages[j] = tmpSubPages[i]; pChild2->NumberOfKeys()++;
+        pChild2->m_Keys[j] = tmpKeys[i];
+        pChild2->m_SubPages[j] = tmpSubPages[i];
+        pChild2->NumberOfKeys()++;
     }
     pChild2->m_SubPages[j] = tmpSubPages[i]; oi2 = tmpKeys[i++];
 
@@ -530,7 +608,9 @@ void CBTreePage<Trait>::SplitPageInto3(
     pChild3->clear();
     nKeys = tmpKeys.size();
     for (j = 0; i < nKeys; i++, j++) {
-        pChild3->m_Keys[j] = tmpKeys[i]; pChild3->m_SubPages[j] = tmpSubPages[i]; pChild3->NumberOfKeys()++;
+        pChild3->m_Keys[j] = tmpKeys[i];
+        pChild3->m_SubPages[j] = tmpSubPages[i];
+        pChild3->NumberOfKeys()++;
     }
     pChild3->m_SubPages[j] = tmpSubPages[i];
 }
@@ -556,7 +636,11 @@ bool CBTreePage<Trait>::Search(const value_type& key, ObjIDType& ObjID)
         if (m_SubPages[pos]) return m_SubPages[pos]->Search(key, ObjID);
         return false;
     }
-    if (key == m_Keys[pos].key) { ObjID = m_Keys[pos].ObjID; m_Keys[pos].UseCounter++; return true; }
+    if (key == m_Keys[pos].key) {
+        ObjID = m_Keys[pos].ObjID;
+        m_Keys[pos].UseCounter++;
+        return true;
+    }
     if (key < m_Keys[pos].key)
         if (m_SubPages[pos]) return m_SubPages[pos]->Search(key, ObjID);
     return false;
@@ -573,7 +657,11 @@ bt_ErrorCode CBTreePage<Trait>::Remove(const value_type& key, const ObjIDType Ob
             if (Underflow()) return bt_underflow;
             return bt_ok;
         }
-        { ObjectInfo& rFirst = m_SubPages[pos+1]->GetFirstObjectInfo(); swap(m_Keys[pos], rFirst); error = m_SubPages[++pos]->Remove(key, ObjID); }
+        {
+            ObjectInfo& rFirst = m_SubPages[pos+1]->GetFirstObjectInfo();
+            swap(m_Keys[pos], rFirst);
+            error = m_SubPages[++pos]->Remove(key, ObjID);
+        }
     } else if (pos == NumberOfKeys()) {
         error = m_SubPages[pos]->Remove(key, ObjID);
     } else if (key <= m_Keys[pos].key) {
@@ -592,20 +680,34 @@ bt_ErrorCode CBTreePage<Trait>::Remove(const value_type& key, const ObjIDType Ob
 template <typename Trait>
 bt_ErrorCode CBTreePage<Trait>::Merge(size_t pos)
 {
-    assert(m_SubPages[pos-1]->NumberOfKeys() + m_SubPages[pos]->NumberOfKeys() + m_SubPages[pos+1]->NumberOfKeys() == 3*m_SubPages[pos]->MinNumberOfKeys()-1);
-    vector<ObjectInfo> tmpKeys; vector<BTPage*> tmpSubPages;
-    BTPage* pChild1 = m_SubPages[pos-1], *pChild2 = m_SubPages[pos], *pChild3 = m_SubPages[pos+1];
+    assert(m_SubPages[pos-1]->NumberOfKeys() + m_SubPages[pos]->NumberOfKeys() +
+           m_SubPages[pos+1]->NumberOfKeys() == 3*m_SubPages[pos]->MinNumberOfKeys()-1);
+    vector<ObjectInfo> tmpKeys;
+    vector<BTPage*>    tmpSubPages;
+    BTPage* pChild1 = m_SubPages[pos-1];
+    BTPage* pChild2 = m_SubPages[pos];
+    BTPage* pChild3 = m_SubPages[pos+1];
     MovePage(pChild1, tmpKeys, tmpSubPages); tmpKeys.push_back(m_Keys[pos-1]);
     MovePage(pChild2, tmpKeys, tmpSubPages); tmpKeys.push_back(m_Keys[pos]);
     MovePage(pChild3, tmpKeys, tmpSubPages); pChild3->Destroy();
     size_t nKeys = pChild1->GetFreeCells(), i = 0;
-    for (; i < nKeys; i++) { pChild1->m_Keys[i]=tmpKeys[i]; pChild1->m_SubPages[i]=tmpSubPages[i]; pChild1->NumberOfKeys()++; }
+    for (; i < nKeys; i++) {
+        pChild1->m_Keys[i] = tmpKeys[i];
+        pChild1->m_SubPages[i] = tmpSubPages[i];
+        pChild1->NumberOfKeys()++;
+    }
     pChild1->m_SubPages[i] = tmpSubPages[i];
     m_Keys[pos-1] = tmpKeys[i]; m_SubPages[pos-1] = pChild1;
     ::remove_at(m_Keys, pos); ::remove_at(m_SubPages, pos); NumberOfKeys()--;
-    nKeys = pChild2->GetFreeCells(); size_t j = ++i;
-    for (i = 0; i < nKeys; i++, j++) { pChild2->m_Keys[i]=tmpKeys[j]; pChild2->m_SubPages[i]=tmpSubPages[j]; pChild2->NumberOfKeys()++; }
-    pChild2->m_SubPages[i] = tmpSubPages[j]; m_SubPages[pos] = pChild2;
+    nKeys = pChild2->GetFreeCells();
+    size_t j = ++i;
+    for (i = 0; i < nKeys; i++, j++) {
+        pChild2->m_Keys[i] = tmpKeys[j];
+        pChild2->m_SubPages[i] = tmpSubPages[j];
+        pChild2->NumberOfKeys()++;
+    }
+    pChild2->m_SubPages[i] = tmpSubPages[j];
+    m_SubPages[pos] = pChild2;
     if (Underflow()) return bt_underflow;
     return bt_ok;
 }
@@ -614,16 +716,25 @@ template <typename Trait>
 bt_ErrorCode CBTreePage<Trait>::MergeRoot()
 {
     size_t pos = 1;
-    assert(m_SubPages[pos-1]->NumberOfKeys() + m_SubPages[pos]->NumberOfKeys() + m_SubPages[pos+1]->NumberOfKeys() == 3*m_SubPages[pos]->MinNumberOfKeys()-1);
-    BTPage* pChild1=m_SubPages[pos-1], *pChild2=m_SubPages[pos], *pChild3=m_SubPages[pos+1];
-    size_t nKeys = pChild1->NumberOfKeys()+pChild2->NumberOfKeys()+pChild3->NumberOfKeys()+2;
-    vector<ObjectInfo> tmpKeys; vector<BTPage*> tmpSubPages;
-    MovePage(pChild1,tmpKeys,tmpSubPages); tmpKeys.push_back(m_Keys[pos-1]);
-    MovePage(pChild2,tmpKeys,tmpSubPages); tmpKeys.push_back(m_Keys[pos]);
-    MovePage(pChild3,tmpKeys,tmpSubPages);
+    assert(m_SubPages[pos-1]->NumberOfKeys() + m_SubPages[pos]->NumberOfKeys() +
+           m_SubPages[pos+1]->NumberOfKeys() == 3*m_SubPages[pos]->MinNumberOfKeys()-1);
+    BTPage* pChild1 = m_SubPages[pos-1];
+    BTPage* pChild2 = m_SubPages[pos];
+    BTPage* pChild3 = m_SubPages[pos+1];
+    size_t nKeys = pChild1->NumberOfKeys() + pChild2->NumberOfKeys() +
+                   pChild3->NumberOfKeys() + 2;
+    vector<ObjectInfo> tmpKeys;
+    vector<BTPage*>    tmpSubPages;
+    MovePage(pChild1, tmpKeys, tmpSubPages); tmpKeys.push_back(m_Keys[pos-1]);
+    MovePage(pChild2, tmpKeys, tmpSubPages); tmpKeys.push_back(m_Keys[pos]);
+    MovePage(pChild3, tmpKeys, tmpSubPages);
     clear();
     size_t i = 0;
-    for (; i < nKeys; i++) { m_Keys[i]=tmpKeys[i]; m_SubPages[i]=tmpSubPages[i]; NumberOfKeys()++; }
+    for (; i < nKeys; i++) {
+        m_Keys[i] = tmpKeys[i];
+        m_SubPages[i] = tmpSubPages[i];
+        NumberOfKeys()++;
+    }
     m_SubPages[i] = tmpSubPages[i];
     pChild1->Destroy(); pChild2->Destroy(); pChild3->Destroy();
     return bt_rootmerged;
@@ -638,10 +749,14 @@ CBTreePage<Trait>::GetFirstObjectInfo()
 }
 
 template <typename Trait>
-void CBTreePage<Trait>::MovePage(BTPage* p, vector<ObjectInfo>& tmpKeys, vector<BTPage*>& tmpSubPages)
+void CBTreePage<Trait>::MovePage(BTPage* p,
+    vector<ObjectInfo>& tmpKeys, vector<BTPage*>& tmpSubPages)
 {
     size_t n = p->GetNumberOfKeys(), i = 0;
-    for (; i < n; i++) { tmpKeys.push_back(p->m_Keys[i]); tmpSubPages.push_back(p->m_SubPages[i]); }
+    for (; i < n; i++) {
+        tmpKeys.push_back(p->m_Keys[i]);
+        tmpSubPages.push_back(p->m_SubPages[i]);
+    }
     tmpSubPages.push_back(p->m_SubPages[i]);
     p->clear();
 }

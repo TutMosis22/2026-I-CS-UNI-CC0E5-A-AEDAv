@@ -2,6 +2,7 @@
 #define BTREE_H
 
 #include <iostream>
+#include <sstream>
 #include "traits.h"
 #include "../types.h"
 
@@ -10,14 +11,12 @@ using namespace std;
 #define DEFAULT_BTREE_ORDER 3
 
 // =====================================================
-// BTree: recibe Trait completo (mismo patrón que
-// LinkedList<Trait>, Heap<Trait>, HashMap<Trait>).
+// BTree: recibe Trait completo.
+// Del Trait extrae: value_type, ObjIDType, Comp, Page.
 //
-// Del Trait extrae:
-//   value_type  — tipo de las claves
-//   ObjIDType   — tipo del identificador almacenado
-//   Comp        — comparador (less / greater)
-//   Page        — CBTreePage<Trait> definido en el Trait
+// ForEach y FirstThat delegan en CBTreePage que usa
+// los iteradores BTreeForwardIterator / BTreeBackwardIterator
+// y el metodo apply() — un solo bucle unificado.
 //
 // Uso:
 //   BTree< AscendingBTreeTrait<T1> > bt;
@@ -47,25 +46,25 @@ public:
     long   height()   { return m_Height;  }
     size_t GetOrder() { return m_Order;   }
 
-    // ForEach variadic
+    // ForEach forward — delega en CBTreePage::ForEach
     template <typename Func, typename... Args>
     void ForEach(Func func, Args&&... args)
     {
         m_Root.ForEach(func, (size_t)0, forward<Args>(args)...);
     }
 
-    // FirstThat variadic (forward)
-    template <typename Func, typename... Args>
-    ObjectInfo* FirstThat(Func func, Args&&... args)
-    {
-        return m_Root.FirstThat(func, (size_t)0, forward<Args>(args)...);
-    }
-
-    // ForEach backward (inorder descendente)
+    // ForEach backward
     template <typename Func, typename... Args>
     void ForEachReverse(Func func, Args&&... args)
     {
         m_Root.ForEachReverse(func, (size_t)0, forward<Args>(args)...);
+    }
+
+    // FirstThat forward
+    template <typename Func, typename... Args>
+    ObjectInfo* FirstThat(Func func, Args&&... args)
+    {
+        return m_Root.FirstThat(func, (size_t)0, forward<Args>(args)...);
     }
 
     // FirstThat backward
@@ -75,15 +74,14 @@ public:
         return m_Root.FirstThatReverse(func, (size_t)0, forward<Args>(args)...);
     }
 
-    // operator<<: imprime el árbol usando ForEach (ya no usa Print helper)
+    // operator<<: usa ForEach — no hay Print helper
     friend ostream& operator<<(ostream& os, BTree& bt)
     {
-        bt.m_Root.ForEach(
-            [](ObjectInfo& info, size_t level, ostream& out) {
-                for (size_t i = 0; i < level; i++) out << "\t";
+        bt.ForEach(
+            [](ObjectInfo& info, ostream& out) {
                 out << info.key << "->" << info.ObjID << "\n";
             },
-            (size_t)0, os);
+            os);
         return os;
     }
 
